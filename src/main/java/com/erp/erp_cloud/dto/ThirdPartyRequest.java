@@ -12,14 +12,12 @@ import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
 
 
-
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class TerceroRequest {
+public class ThirdPartyRequest {
 
     // --- Identificación ---
 

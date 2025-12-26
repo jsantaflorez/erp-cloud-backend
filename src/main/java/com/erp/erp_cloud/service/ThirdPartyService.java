@@ -1,8 +1,8 @@
 package com.erp.erp_cloud.service;
 
-import com.erp.erp_cloud.dto.TerceroRequest;
-import com.erp.erp_cloud.entity.Tercero;
-import com.erp.erp_cloud.repository.TerceroRepository;
+import com.erp.erp_cloud.dto.ThirdPartyRequest;
+import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.util.List;
@@ -10,14 +10,14 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
-public class TerceroService {
+public class ThirdPartyService {
 
-    private final TerceroRepository terceroRepository;
+    private final ThirdPartyRepository terceroRepository;
 
-    public Tercero create(TerceroRequest request) {
+    public ThirdParty create(ThirdPartyRequest request) {
 
         // Validar duplicado
-        Optional<Tercero> existente =
+        Optional<ThirdParty> existente =
                 terceroRepository.findByNumeroDocumento(request.getNumeroDocumento());
 
         if (existente.isPresent()) {
@@ -26,7 +26,7 @@ public class TerceroService {
             );
         }
 
-        Tercero tercero = new Tercero();
+        ThirdParty tercero = new ThirdParty();
 
 
 
@@ -48,11 +48,11 @@ public class TerceroService {
 
         return terceroRepository.save(tercero);
     }
-    public List<Tercero> listAll() {
+    public List<ThirdParty> listAll() {
         return terceroRepository.findAll();
     }
 
-public Tercero getByNumeroDocumento(String numeroDocumento){
+public ThirdParty getByNumeroDocumento(String numeroDocumento){
 
     return terceroRepository
             .findByNumeroDocumento(numeroDocumento)

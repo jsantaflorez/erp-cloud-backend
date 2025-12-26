@@ -1,9 +1,9 @@
 package com.erp.erp_cloud.controller;
 
 
-import com.erp.erp_cloud.dto.TerceroRequest;
-import com.erp.erp_cloud.entity.Tercero;
-import com.erp.erp_cloud.service.TerceroService;
+import com.erp.erp_cloud.dto.ThirdPartyRequest;
+import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.service.ThirdPartyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -14,27 +14,27 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/terceros")
 @RequiredArgsConstructor
-public class TerceroController {
+public class ThirdPartyController {
 
-    private final TerceroService terceroService;
+    private final ThirdPartyService terceroService;
 
     @PostMapping
-    public ResponseEntity<Tercero> createTercero(
-            @Valid @RequestBody TerceroRequest request
+    public ResponseEntity<ThirdParty> createTercero(
+            @Valid @RequestBody ThirdPartyRequest request
     ) {
-        Tercero tercero = terceroService.create(request);
+        ThirdParty tercero = terceroService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(tercero);
     }
     @GetMapping
-    public ResponseEntity<List<Tercero>> getAllTerceros() {
+    public ResponseEntity<List<ThirdParty>> getAllTerceros() {
         return ResponseEntity.ok(terceroService.listAll());
     }
 
     @GetMapping("/documento/{numeroDocumento}")
-    public ResponseEntity<Tercero> getByNumeroDocumento(
+    public ResponseEntity<ThirdParty> getByNumeroDocumento(
             @PathVariable String numeroDocumento
     ) {
-        Tercero tercero = terceroService.getByNumeroDocumento(numeroDocumento);
+        ThirdParty tercero = terceroService.getByNumeroDocumento(numeroDocumento);
         return ResponseEntity.ok(tercero);
     }
 
