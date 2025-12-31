@@ -1,7 +1,9 @@
 package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.entity.ChartOfAccounts;
+import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,94 +12,150 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class ChartOfAccountsService {
 
-    private final ChartOfAccountsRepository cuentaRepository;
+    private final ChartOfAccountsRepository repository;
+    private final CompanyContext companyContext;
 
-    // =========================
-    // CREAR CUENTA CONTABLE
-    // =========================
-    @Transactional
-    public ChartOfAccounts crear(ChartOfAccounts cuenta, Long idPadre) {
+    // =====================================================
+    // CREATE
+    // =====================================================
+    public ChartOfAccounts create(ChartOfAccounts account) {
 
-        // 1. Código único
-        if (cuentaRepository.existsByCodigo(cuenta.getCodigo())) {
-            throw new IllegalArgumentException(
-                    "Ya existe una cuenta contable con el código " + cuenta.getCodigo()
+        Company company = companyContext.getCurrentCompany();
+
+        boolean exists = repository.existsByCompanyAndCode(
+                company,
+                account.getCode()
+        );
+
+        if (exists) {
+            throw new IllegalStateException(
+                    "Account code already exists for this company"
             );
         }
 
-        // 2. Cuenta raíz
-        if (idPadre == null) {
-            cuenta.setPadre(null);
-            cuenta.setNivel((byte) 1);
-        }
-        // 3. Cuenta hija
-        else {
-            ChartOfAccounts padre = cuentaRepository.findById(idPadre)
-                    .orElseThrow(() ->
-                            new IllegalArgumentException("La cuenta padre no existe")
-                    );
+        account.setId(null);
+        account.setCompany(company);
+        account.setActive(true);
 
-            // 4. El padre NO puede ser de movimiento
-            if (Boolean.TRUE.equals(padre.getEsMovimiento())) {
-                throw new IllegalArgumentException(
-                        "No se pueden crear subcuentas bajo una cuenta de movimiento"
+        return repository.save(account);
+    }
+
+    // =====================================================
+    // READ
+    // =====================================================
+    @Transactional(readOnly = true)
+    public ChartOfAccounts findByCode(String code) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository
+                .findByCompanyAndCode(company, code)
+                .orElseThrow(() ->
+                        new IllegalStateException("Account not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public ChartOfAccounts findById(Long id) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository.findById(id)
+                .filter(acc -> acc.getCompany().equals(company))
+                .orElseThrow(() ->
+                        new IllegalStateException("Account not found"));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChartOfAccounts> listRoots() {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository.findByCompanyAndParentIsNullOrderByCodeAsc(company);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChartOfAccounts> listChildren(Long parentId) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository.findByCompanyAndParentIdOrderByCodeAsc(
+                company,
+                parentId
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChartOfAccounts> listPostingAccounts() {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository
+                .findByCompanyAndPostingAccountTrueAndActiveTrueOrderByCodeAsc(
+                        company
                 );
-            }
-
-            // 5. Nivel coherente
-            cuenta.setNivel((byte) (padre.getNivel() + 1));
-
-            // 6. Hereda naturaleza del padre
-            cuenta.setNaturaleza(padre.getNaturaleza());
-
-            cuenta.setPadre(padre);
-        }
-
-        // 7. Si es cuenta título, NO debe permitir movimientos
-        if (Boolean.FALSE.equals(cuenta.getEsMovimiento())) {
-            cuenta.setRequiereTercero(false);
-            cuenta.setRequiereCentroCosto(false);
-            cuenta.setRequiereSubCentro(false);
-        }
-
-        return cuentaRepository.save(cuenta);
     }
 
-    // =========================
-    // LISTAR CUENTAS RAÍZ
-    // =========================
     @Transactional(readOnly = true)
-    public List<ChartOfAccounts> obtenerRaices() {
-        return cuentaRepository.findByPadreIsNullOrderByCodigoAsc();
+    public List<ChartOfAccounts> search(String text) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository
+                .findByCompanyAndNameContainingIgnoreCaseOrCompanyAndCodeContainingIgnoreCase(
+                        company,
+                        text,
+                        company,
+                        text
+                );
     }
 
-    // =========================
-    // LISTAR HIJOS DE UNA CUENTA
-    // =========================
     @Transactional(readOnly = true)
-    public List<ChartOfAccounts> obtenerHijos(Long idPadre) {
-        return cuentaRepository.findByPadreIdCuentaOrderByCodigoAsc(idPadre);
+    public List<ChartOfAccounts> listByLevel(Byte level) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return repository
+                .findByCompanyAndLevelAndActiveTrueOrderByCodeAsc(
+                        company,
+                        level
+                );
     }
 
-    // =========================
-    // CUENTAS USABLES EN ASIENTOS
-    // =========================
-    @Transactional(readOnly = true)
-    public List<ChartOfAccounts> obtenerCuentasMovimiento() {
-        return cuentaRepository.findByEsMovimientoTrueAndActivaTrueOrderByCodigoAsc();
+    // =====================================================
+    // UPDATE
+    // =====================================================
+    public ChartOfAccounts update(Long id, ChartOfAccounts data) {
+
+        ChartOfAccounts existing = findById(id);
+
+        existing.setName(data.getName());
+        existing.setNature(data.getNature());
+        existing.setAccountClass(data.getAccountClass());
+        existing.setAccountType(data.getAccountType());
+        existing.setPostingAccount(data.getPostingAccount());
+
+        existing.setRequiresThirdParty(data.getRequiresThirdParty());
+        existing.setRequiresCostCenter(data.getRequiresCostCenter());
+        existing.setRequiresSubCostCenter(data.getRequiresSubCostCenter());
+
+        existing.setParent(data.getParent());
+
+        return repository.save(existing);
     }
 
-    // =========================
-    // DESACTIVAR CUENTA
-    // =========================
-    @Transactional
-    public void desactivar(Long idCuenta) {
-        ChartOfAccounts cuenta = cuentaRepository.findById(idCuenta)
-                .orElseThrow(() -> new IllegalArgumentException("Cuenta no encontrada"));
+    // =====================================================
+    // ENABLE / DISABLE (ERP REAL)
+    // =====================================================
+    public void deactivate(Long id) {
+        ChartOfAccounts account = findById(id);
+        account.setActive(false);
+    }
 
-        cuenta.setActiva(false);
-        cuentaRepository.save(cuenta);
+    public void activate(Long id) {
+        ChartOfAccounts account = findById(id);
+        account.setActive(true);
     }
 }

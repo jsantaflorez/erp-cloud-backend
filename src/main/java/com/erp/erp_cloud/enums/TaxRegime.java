@@ -1,19 +1,22 @@
 package com.erp.erp_cloud.enums;
+
+
 public enum TaxRegime {
-    SIMPLIFIED("Régimen Simplificado / No responsable de IVA"),
-    COMMON("Régimen Común / Responsable de IVA"),
-    GRAND_TAXPAYER("Gran Contribuyente"),
-    SPECIAL("Régimen Especial"),
-    INDIVIDUAL("Persona Natural"),
-    CORPORATE("Persona Jurídica / Sociedad");
+    // 1. Responsable de IVA (Antiguo Régimen Común)
+    VAT_REGISTERED,
 
-    private final String description;
+    // 2. No Responsable de IVA (Antiguo Régimen Simplificado)
+    VAT_NOT_REGISTERED,
 
-    TaxRegime(String description) {
-        this.description = description;
-    }
+    // 3. Gran Contribuyente (Opcional, pero muy común en ERPs)
+    GRAND_TAXPAYER,
 
-    public String getDescription() {
-        return description;
-    }
+    // 4. Régimen Especial (Entidades sin ánimo de lucro)
+    SPECIAL_REGIME,
+
+    // 5. Para Terceros: Persona Natural
+    INDIVIDUAL,
+
+    // 6. Para Terceros: Persona Jurídica / Sociedad
+    CORPORATE
 }

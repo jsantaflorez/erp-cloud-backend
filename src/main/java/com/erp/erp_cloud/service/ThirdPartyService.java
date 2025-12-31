@@ -1,66 +1,124 @@
 package com.erp.erp_cloud.service;
 
-import com.erp.erp_cloud.dto.ThirdPartyRequest;
+import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
+import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class ThirdPartyService {
 
-    private final ThirdPartyRepository terceroRepository;
+    private final ThirdPartyRepository thirdPartyRepository;
+    private final CompanyContext companyContext; // contexto de empresa activa
 
-    public ThirdParty create(ThirdPartyRequest request) {
+    // =====================================================
+    // CREATE
+    // =====================================================
+    public ThirdParty create(ThirdParty thirdParty) {
 
-        // Validar duplicado
-        Optional<ThirdParty> existente =
-                terceroRepository.findByNumeroDocumento(request.getNumeroDocumento());
+        Company company = companyContext.getCurrentCompany();
 
-        if (existente.isPresent()) {
-            throw new IllegalArgumentException(
-                    "Ya existe un tercero con ese número de documento"
+        boolean exists = thirdPartyRepository
+                .existsByCompanyAndDocumentNumber(
+                        company,
+                        thirdParty.getDocumentNumber()
+                );
+
+        if (exists) {
+            throw new IllegalStateException(
+                    "Third party already exists for this company"
             );
         }
 
-        ThirdParty tercero = new ThirdParty();
+        thirdParty.setId(null); // seguridad
+        thirdParty.setCompany(company);
+        thirdParty.setActive(true);
 
-
-
-        tercero.setTipoDocumento(request.getTipoDocumento());
-        tercero.setNumeroDocumento(request.getNumeroDocumento());
-        tercero.setDigitoVerificacion(request.getDigitoVerificacion());
-        tercero.setTipoPersona(request.getTipoPersona());
-        tercero.setRegimen(request.getRegimen());
-        tercero.setPrimerNombre(request.getPrimerNombre());
-        tercero.setSegundoNombre(request.getSegundoNombre());
-        tercero.setPrimerApellido(request.getPrimerApellido());
-        tercero.setSegundoApellido(request.getSegundoApellido());
-        tercero.setRazonSocial(request.getRazonSocial());
-        tercero.setCorreo(request.getCorreo());
-        tercero.setCelular(request.getCelular());
-        tercero.setTelefono(request.getTelefono());
-        tercero.setDireccion(request.getDireccion());
-        tercero.setCodigoMunicipio(request.getCodigoMunicipio());
-
-        return terceroRepository.save(tercero);
+        return thirdPartyRepository.save(thirdParty);
     }
+
+    // =====================================================
+    // READ
+    // =====================================================
+    @Transactional(readOnly = true)
+
     public List<ThirdParty> listAll() {
-        return terceroRepository.findAll();
+        Company company = companyContext.getCurrentCompany();
+
+        return thirdPartyRepository.findAll()
+                .stream()
+                .filter(tp -> tp.getCompany().equals(company))
+                .toList();
     }
 
-public ThirdParty getByNumeroDocumento(String numeroDocumento){
 
-    return terceroRepository
-            .findByNumeroDocumento(numeroDocumento)
-            .orElseThrow(() -> new IllegalArgumentException(
-                    "No existe un tercero con el número de documento " + numeroDocumento
-            ));
-}
+    @Transactional(readOnly = true)
+    public ThirdParty getByDocumentNumber(String documentNumber) {
 
+        Company company = companyContext.getCurrentCompany();
 
+        return thirdPartyRepository
+                .findByCompanyAndDocumentNumber(company, documentNumber)
+                .orElseThrow(() ->
+                        new IllegalStateException("Third party not found"));
+    }
 
+    @Transactional(readOnly = true)
+    public ThirdParty findById(Long id) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        return thirdPartyRepository.findById(id)
+                .filter(tp -> tp.getCompany().equals(company))
+                .orElseThrow(() ->
+                        new IllegalStateException("Third party not found"));
+    }
+
+    // =====================================================
+    // UPDATE
+    // =====================================================
+    public ThirdParty update(Long id, ThirdParty data) {
+
+        ThirdParty existing = findById(id);
+
+        // ⚠️ El document number puede cambiar sin romper movimientos
+        existing.setDocumentNumber(data.getDocumentNumber());
+        existing.setDocumentType(data.getDocumentType());
+        existing.setVerificationDigit(data.getVerificationDigit());
+        existing.setPersonType(data.getPersonType());
+        existing.setTaxRegime(data.getTaxRegime());
+
+        existing.setFirstName(data.getFirstName());
+        existing.setMiddleName(data.getMiddleName());
+        existing.setLastName(data.getLastName());
+        existing.setSecondLastName(data.getSecondLastName());
+        existing.setBusinessName(data.getBusinessName());
+
+        existing.setEmail(data.getEmail());
+        existing.setMobile(data.getMobile());
+        existing.setPhone(data.getPhone());
+        existing.setAddress(data.getAddress());
+        existing.setCityCode(data.getCityCode());
+
+        return thirdPartyRepository.save(existing);
+    }
+
+    // =====================================================
+    // ENABLE / DISABLE (ERP real)
+    // =====================================================
+    public void deactivate(Long id) {
+        ThirdParty thirdParty = findById(id);
+        thirdParty.setActive(false);
+    }
+
+    public void activate(Long id) {
+        ThirdParty thirdParty = findById(id);
+        thirdParty.setActive(true);
+    }
 }

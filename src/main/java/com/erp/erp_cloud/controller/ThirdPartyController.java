@@ -1,7 +1,5 @@
 package com.erp.erp_cloud.controller;
 
-
-import com.erp.erp_cloud.dto.ThirdPartyRequest;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.service.ThirdPartyService;
 import jakarta.validation.Valid;
@@ -9,33 +7,34 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
+import java.util.List;
 @RestController
-@RequestMapping("/api/terceros")
+@RequestMapping("/api/third-parties")
 @RequiredArgsConstructor
 public class ThirdPartyController {
 
-    private final ThirdPartyService terceroService;
+    private final ThirdPartyService thirdPartyService;
 
     @PostMapping
-    public ResponseEntity<ThirdParty> createTercero(
-            @Valid @RequestBody ThirdPartyRequest request
+    public ResponseEntity<ThirdParty> create(
+            @Valid @RequestBody ThirdParty thirdParty
     ) {
-        ThirdParty tercero = terceroService.create(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(tercero);
+        ThirdParty created = thirdPartyService.create(thirdParty);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
+
     @GetMapping
-    public ResponseEntity<List<ThirdParty>> getAllTerceros() {
-        return ResponseEntity.ok(terceroService.listAll());
+    public ResponseEntity<List<ThirdParty>> listAll() {
+        return ResponseEntity.ok(thirdPartyService.listAll());
     }
 
-    @GetMapping("/documento/{numeroDocumento}")
-    public ResponseEntity<ThirdParty> getByNumeroDocumento(
-            @PathVariable String numeroDocumento
+    @GetMapping("/document/{documentNumber}")
+    public ResponseEntity<ThirdParty> getByDocumentNumber(
+            @PathVariable String documentNumber
     ) {
-        ThirdParty tercero = terceroService.getByNumeroDocumento(numeroDocumento);
-        return ResponseEntity.ok(tercero);
+        return ResponseEntity.ok(
+                thirdPartyService.getByDocumentNumber(documentNumber)
+        );
     }
-
 }

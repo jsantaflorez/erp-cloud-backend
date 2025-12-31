@@ -1,5 +1,5 @@
 package com.erp.erp_cloud.entity;
-
+import com.erp.erp_cloud.enums.TaxRegime;
 import jakarta.persistence.*;
 import lombok.Data;
 @Entity
@@ -35,8 +35,11 @@ public class ThirdParty {
     @Column(name = "person_type", length = 20, nullable = false)
     private String personType;
 
-    @Column(name = "tax_regime", length = 50, nullable = false)
-    private String taxRegime;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "tax_regime", nullable = false, length = 50)
+    private TaxRegime taxRegime;
+
+
 
     @Column(name = "first_name", length = 50)
     private String firstName;
@@ -65,8 +68,11 @@ public class ThirdParty {
     @Column(name = "address", length = 200)
     private String address;
 
-    @Column(name = "city_code", length = 10)
-    private String cityCode;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "city_id", nullable = false)
+    private City cityCode;
+
+
 
     @Column(name = "active", nullable = false)
     private Boolean active = true;

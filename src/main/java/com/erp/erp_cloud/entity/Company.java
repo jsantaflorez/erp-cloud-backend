@@ -1,17 +1,16 @@
 package com.erp.erp_cloud.entity;
 
-
 import com.erp.erp_cloud.enums.TaxRegime;
-
 import jakarta.persistence.*;
 import lombok.*;
+
 import java.io.Serializable;
 
 @Entity
 @Table(
-        name = "t_empresas",
+        name = "t_companies",
         uniqueConstraints = {
-                @UniqueConstraint(columnNames = {"nit", "id_pais"}),
+                @UniqueConstraint(columnNames = {"tax_id"}),
                 @UniqueConstraint(columnNames = {"tenant_id"})
         }
 )
@@ -24,70 +23,73 @@ public class Company implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    // --------------------
-    // IDENTIDAD
-    // --------------------
+    // =====================
+    // IDENTITY
+    // =====================
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "empresa_id")
+    @Column(name = "company_id", nullable = false)
     private Long id;
 
-    @Column(name = "razon_social", nullable = false, length = 150)
-    private String razonSocial;
+    // =====================
+    // GENERAL INFORMATION
+    // =====================
 
-    @Column(name = "nombre_comercial", length = 150)
-    private String nombreComercial;
+    @Column(name = "legal_name", nullable = false, length = 150)
+    private String legalName;
 
-    // --------------------
-    // IDENTIFICACIÓN FISCAL
-    // --------------------
+    @Column(name = "trade_name", length = 150)
+    private String tradeName;
 
-    @Column(name = "nit", nullable = false, length = 20)
-    private String nit;
+    // =====================
+    // TAX IDENTIFICATION
+    // =====================
 
-    @Column(name = "digito_verificacion", length = 2)
-    private String digitoVerificacion;
+    @Column(name = "tax_id", nullable = false, length = 20)
+    private String taxId;
+
+    @Column(name = "verification_digit", length = 2)
+    private String verificationDigit;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "regimen_fiscal", nullable = false, length = 50)
-    private TaxRegime regimenFiscal;
+    @Column(name = "tax_regime", nullable = false, length = 50)
+    private TaxRegime taxRegime;
 
-    // --------------------
-    // LOCALIZACIÓN
-    // --------------------
+    // =====================
+    // LOCATION
+    // =====================
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "id_pais", nullable = false)
-    private Country pais;
 
-    @Column(name = "codigo_municipio", length = 10)
-    private String codigoMunicipio; // Código DANE / equivalente internacional
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "city_id", nullable = false)
+    private City city;
 
-    // --------------------
-    // CONTACTO
-    // --------------------
 
-    @Column(length = 200)
-    private String direccion;
 
-    @Column(length = 50)
-    private String telefono;
+    // =====================
+    // CONTACT
+    // =====================
 
-    @Column(nullable = false, length = 100)
+    @Column(name = "address", length = 200)
+    private String address;
+
+    @Column(name = "phone", length = 50)
+    private String phone;
+
+    @Column(name = "email", nullable = false, length = 100)
     private String email;
 
-    // --------------------
+    // =====================
     // MULTI-TENANT / CLOUD
-    // --------------------
+    // =====================
 
-    @Column(name = "tenant_id", nullable = false, length = 50)
+    @Column(name = "tenant_id", nullable = false, length = 50, unique = true)
     private String tenantId;
 
-    @Column(nullable = false)
-    private Boolean activo = true;
+    @Column(name = "active", nullable = false)
+    private Boolean active = true;
 
     @Column(name = "logo_url")
     private String logoUrl;
 }
-

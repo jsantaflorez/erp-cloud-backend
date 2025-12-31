@@ -6,12 +6,14 @@ import lombok.ToString;
 
 import java.util.ArrayList;
 import java.util.List;
-
 @Entity
 @Table(
-        name = "t_puc",
+        name = "chart_of_accounts",
         uniqueConstraints = {
-                @UniqueConstraint(columnNames = {"codigo"})
+                @UniqueConstraint(
+                        name = "uk_company_code",
+                        columnNames = {"company_id", "code"}
+                )
         }
 )
 @Data
@@ -23,110 +25,92 @@ public class ChartOfAccounts {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_cuenta")
-    private Long idCuenta;
+    private Long id;
 
     /**
-     * Código contable (ej: 110505, 413505, etc.)
-     * Único en todo el PUC
+     * Empresa dueña del plan de cuentas
      */
-    @Column(nullable = false, length = 20)
-    private String codigo;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "company_id", nullable = false)
+    private Company company;
+
+    /**
+     * Código contable (110505, 413505, etc.)
+     * Único por empresa
+     */
+    @Column(name = "code", nullable = false, length = 20)
+    private String code;
 
     /**
      * Nombre de la cuenta
      */
-    @Column(nullable = false, length = 150)
-    private String nombre;
+    @Column(name = "name", nullable = false, length = 150)
+    private String name;
 
     /**
-     * Nivel contable (1–9 suele ser suficiente)
+     * Nivel contable
      */
     @Column(nullable = false)
-    private Byte nivel;
+    private Byte level;
 
     /**
      * Naturaleza contable:
-     * D = Débito
-     * C = Crédito
+     * D = Debit
+     * C = Credit
      */
     @Column(nullable = false, length = 1)
-    private String naturaleza;
+    private String nature;
 
     // =========================
     // CLASIFICACIÓN CONTABLE
     // =========================
 
-    /**
-     * Clase contable:
-     * ACTIVO, PASIVO, PATRIMONIO, INGRESO, GASTO, COSTO, ORDEN
-     */
     @Column(nullable = false, length = 20)
-    private String clase;
+    private String accountClass;
 
-    /**
-     * Tipo financiero:
-     * Corriente, No Corriente, Resultados, etc.
-     */
+  //  Tipo financiero:   * Corriente, No Corriente, Resultados, etc.
+
+
     @Column(length = 20)
-    private String tipo;
+    private String accountType;
 
     /**
-     * Indica si la cuenta permite movimientos contables
-     * true  = cuenta de movimiento
-     * false = cuenta título
+     * Cuenta de movimiento o título
      */
     @Column(nullable = false)
-    private Boolean esMovimiento;
+    private Boolean postingAccount;
 
     // =========================
-    // REGLAS DE USO EN ASIENTOS
+    // REGLAS CONTABLES
     // =========================
 
-    /**
-     * Indica si en los asientos exige tercero
-     */
     @Column(nullable = false)
-    private Boolean requiereTercero = false;
+    private Boolean requiresThirdParty = false;
+
+    @Column(nullable = false)
+    private Boolean requiresCostCenter = false;
+
+    @Column(nullable = false)
+    private Boolean requiresSubCostCenter = false;
 
     /**
-     * Indica si exige centro de costo
+     * Cuenta activa / inactiva
      */
     @Column(nullable = false)
-    private Boolean requiereCentroCosto = false;
-
-    /**
-     * Indica si exige subcentro o proyecto
-     */
-    @Column(nullable = false)
-    private Boolean requiereSubCentro = false;
-
-    /**
-     * Cuenta activa o inactiva
-     */
-    @Column(nullable = false)
-    private Boolean activa = true;
+    private Boolean active = true;
 
     // =========================
-    // JERARQUÍA DEL PUC
+    // JERARQUÍA
     // =========================
 
-    /**
-     * Cuenta padre (nivel superior)
-     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_padre")
-    @ToString.Exclude
-    private ChartOfAccounts padre;
+    @JoinColumn(name = "parent_id")
+    private ChartOfAccounts parent;
 
-    /**
-     * Cuentas hijas (niveles inferiores)
-     */
     @OneToMany(
-            mappedBy = "padre",
+            mappedBy = "parent",
             cascade = {CascadeType.PERSIST, CascadeType.MERGE},
             fetch = FetchType.LAZY
     )
-    @ToString.Exclude
-    private List<ChartOfAccounts> hijos = new ArrayList<>();
+    private List<ChartOfAccounts> children = new ArrayList<>();
 }
