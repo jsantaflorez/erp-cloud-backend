@@ -1,7 +1,13 @@
 package com.erp.erp_cloud.entity;
+
 import com.erp.erp_cloud.enums.TaxRegime;
 import jakarta.persistence.*;
 import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
+import java.io.Serializable;
+
 @Entity
 @Table(
         name = "third_parties",
@@ -13,7 +19,9 @@ import lombok.Data;
         }
 )
 @Data
-public class ThirdParty {
+// 1. Evita el error de ByteBuddyInterceptor (Proxy de Hibernate)
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+public class ThirdParty implements Serializable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -21,6 +29,8 @@ public class ThirdParty {
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "company_id", nullable = false)
+    // 2. Ocultamos la empresa en la respuesta para evitar recursión infinita
+    @JsonIgnore
     private Company company;
 
     @Column(name = "document_number", length = 20, nullable = false)
@@ -30,7 +40,7 @@ public class ThirdParty {
     private String documentType;
 
     @Column(name = "verification_digit")
-    private Byte verificationDigit;
+    private Integer verificationDigit;
 
     @Column(name = "person_type", length = 20, nullable = false)
     private String personType;
@@ -38,8 +48,6 @@ public class ThirdParty {
     @Enumerated(EnumType.STRING)
     @Column(name = "tax_regime", nullable = false, length = 50)
     private TaxRegime taxRegime;
-
-
 
     @Column(name = "first_name", length = 50)
     private String firstName;
@@ -70,11 +78,9 @@ public class ThirdParty {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "city_id", nullable = false)
-    private City cityCode;
-
-
+    // QUITAMOS @JsonIgnore para que Postman pueda enviar el ID
+    private City city;
 
     @Column(name = "active", nullable = false)
     private Boolean active = true;
-
 }

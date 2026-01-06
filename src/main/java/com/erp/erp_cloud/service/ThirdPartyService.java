@@ -47,16 +47,13 @@ public class ThirdPartyService {
     // READ
     // =====================================================
     @Transactional(readOnly = true)
-
     public List<ThirdParty> listAll() {
+        // 1. Obtenemos la empresa del contexto (seguridad)
         Company company = companyContext.getCurrentCompany();
 
-        return thirdPartyRepository.findAll()
-                .stream()
-                .filter(tp -> tp.getCompany().equals(company))
-                .toList();
+        // 2. Llamamos al método del repository que acabamos de crear
+        return thirdPartyRepository.findByCompany(company);
     }
-
 
     @Transactional(readOnly = true)
     public ThirdParty getByDocumentNumber(String documentNumber) {
@@ -104,7 +101,7 @@ public class ThirdPartyService {
         existing.setMobile(data.getMobile());
         existing.setPhone(data.getPhone());
         existing.setAddress(data.getAddress());
-        existing.setCityCode(data.getCityCode());
+        existing.setCity(data.getCity());
 
         return thirdPartyRepository.save(existing);
     }

@@ -34,6 +34,6 @@ public class ThirdPartyRequest {
     private String mobile;
     private String address;
 
-    @NotNull
+    @NotNull(message = "City ID is required")
     private Long cityId;
 }

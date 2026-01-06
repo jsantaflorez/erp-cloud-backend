@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.ToString;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 @Entity
@@ -17,7 +18,7 @@ import java.util.List;
         }
 )
 @Data
-public class ChartOfAccounts {
+public class ChartOfAccounts implements Serializable {
 
     // =========================
     // IDENTIFICACIÓN
