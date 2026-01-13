@@ -11,62 +11,46 @@ import java.util.Optional;
 @Repository
 public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts, Long> {
 
-    // =====================================================
-    // VALIDACIONES BÁSICAS (por empresa)
-    // =====================================================
+    /**
+     * Basic validations per company
+     */
+    Optional<ChartOfAccounts> findByCompanyAndCode( Company company,String code);
 
-    Optional<ChartOfAccounts> findByCompanyAndCode(
-            Company company,
-            String code
-    );
+    boolean existsByCompanyAndCode(Company company, String code );
 
-    boolean existsByCompanyAndCode(
-            Company company,
-            String code
-    );
-
-    // =====================================================
-    // JERARQUÍA DEL PLAN DE CUENTAS
-    // =====================================================
-
-    // Cuentas raíz (sin padre) por empresa
+    /**
+     * Chart of accounts hierarchy
+     */
+    // Root accounts (level 1, no parent)
     List<ChartOfAccounts> findByCompanyAndParentIsNullOrderByCodeAsc(
             Company company
     );
 
-    // Hijos directos de una cuenta
-    List<ChartOfAccounts> findByCompanyAndParentIdOrderByCodeAsc(
-            Company company,
-            Long parentId
+
+    // Direct children of a specific account
+    List<ChartOfAccounts> findByCompanyAndParentIdOrderByCodeAsc(Company company, Long parentId);
+
+    /**
+     * Accounting journal entry usage
+     */
+    // Active accounts allowed for posting movements
+    List<ChartOfAccounts> findByCompanyAndPostingAccountTrueAndActiveTrueOrderByCodeAsc(Company company);
+
+
+    /**
+     * Functional searches for UI
+     */
+    // Autocomplete by code or name
+    List<ChartOfAccounts> findByCompanyAndNameContainingIgnoreCaseOrCompanyAndCodeContainingIgnoreCase(
+            Company company1, String name, Company company2, String code
     );
 
-    // =====================================================
-    // USO EN ASIENTOS CONTABLES
-    // =====================================================
+    // Active accounts filtered by level
+    List<ChartOfAccounts> findByCompanyAndLevelAndActiveTrueOrderByCodeAsc(Company company, Byte level);
 
-    // Solo cuentas activas y de movimiento (posting)
-    List<ChartOfAccounts>
-    findByCompanyAndPostingAccountTrueAndActiveTrueOrderByCodeAsc(
-            Company company
-    );
 
-    // =====================================================
-    // BÚSQUEDAS FUNCIONALES (UI)
-    // =====================================================
-
-    // Autocompletado por código o nombre
-    List<ChartOfAccounts>
-    findByCompanyAndNameContainingIgnoreCaseOrCompanyAndCodeContainingIgnoreCase(
-            Company company1,
-            String name,
-            Company company2,
-            String code
-    );
-
-    // Cuentas activas por nivel
-    List<ChartOfAccounts>
-    findByCompanyAndLevelAndActiveTrueOrderByCodeAsc(
-            Company company,
-            Byte level
-    );
+    /**
+     * Retrieves the complete catalog for a company ordered by accounting code
+     */
+    List<ChartOfAccounts> findByCompanyOrderByCodeAsc(Company company);
 }

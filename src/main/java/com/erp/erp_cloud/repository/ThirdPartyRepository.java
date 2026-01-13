@@ -4,9 +4,11 @@ import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.ThirdParty;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
 import java.util.Optional;
 import java.util.List;
-
+@Repository
 public interface  ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
 
     Optional<ThirdParty> findByCompanyAndDocumentNumber(

@@ -56,6 +56,11 @@ public class ThirdPartyController {
         return ResponseEntity.ok(thirdPartyService.listAll());
     }
 
+    @GetMapping("/{id}")
+    public ResponseEntity<ThirdParty> getById(@PathVariable Long id) {
+        return ResponseEntity.ok(thirdPartyService.findById(id));
+    }
+
     @GetMapping("/document/{documentNumber}")
     public ResponseEntity<ThirdParty> getByDocumentNumber(
             @PathVariable String documentNumber
@@ -64,4 +69,11 @@ public class ThirdPartyController {
                 thirdPartyService.getByDocumentNumber(documentNumber)
         );
     }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ThirdParty> update(@PathVariable Long id, @Valid @RequestBody ThirdPartyRequest request) {
+        ThirdParty updated = thirdPartyService.update(id, request);
+        return ResponseEntity.ok(updated);
+    }
+
 }

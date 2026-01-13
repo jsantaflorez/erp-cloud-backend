@@ -1,12 +1,17 @@
 package com.erp.erp_cloud.service;
 
+import com.erp.erp_cloud.dto.ThirdPartyRequest;
+import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
 import java.util.List;
 
 @Service
@@ -65,44 +70,47 @@ public class ThirdPartyService {
                 .orElseThrow(() ->
                         new IllegalStateException("Third party not found"));
     }
-
     @Transactional(readOnly = true)
     public ThirdParty findById(Long id) {
-
         Company company = companyContext.getCurrentCompany();
 
         return thirdPartyRepository.findById(id)
-                .filter(tp -> tp.getCompany().equals(company))
-                .orElseThrow(() ->
-                        new IllegalStateException("Third party not found"));
+                .filter(tp -> tp.getCompany().getId().equals(company.getId()))
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Third party with ID " + id + " not found for this company"));
+
     }
 
     // =====================================================
     // UPDATE
     // =====================================================
-    public ThirdParty update(Long id, ThirdParty data) {
-
+    @Transactional
+    public ThirdParty update(Long id, ThirdPartyRequest request) {
+        // 1. Buscamos el tercero existente usando el método que ya validaba la empresa
         ThirdParty existing = findById(id);
 
-        // ⚠️ El document number puede cambiar sin romper movimientos
-        existing.setDocumentNumber(data.getDocumentNumber());
-        existing.setDocumentType(data.getDocumentType());
-        existing.setVerificationDigit(data.getVerificationDigit());
-        existing.setPersonType(data.getPersonType());
-        existing.setTaxRegime(data.getTaxRegime());
+        // 2. Actualizamos los campos desde el Request
+        existing.setDocumentNumber(request.getDocumentNumber());
+        existing.setDocumentType(request.getDocumentType());
+        existing.setVerificationDigit(request.getVerificationDigit());
+        existing.setPersonType(request.getPersonType());
+        existing.setTaxRegime(request.getTaxRegime());
+        existing.setFirstName(request.getFirstName());
+        existing.setMiddleName(request.getMiddleName());
+        existing.setLastName(request.getLastName());
+        existing.setSecondLastName(request.getSecondLastName());
+        existing.setBusinessName(request.getBusinessName());
+        existing.setEmail(request.getEmail());
+        existing.setPhone(request.getPhone());
+        existing.setMobile(request.getMobile());
+        existing.setAddress(request.getAddress());
 
-        existing.setFirstName(data.getFirstName());
-        existing.setMiddleName(data.getMiddleName());
-        existing.setLastName(data.getLastName());
-        existing.setSecondLastName(data.getSecondLastName());
-        existing.setBusinessName(data.getBusinessName());
+        // 3. Actualizamos la ciudad
+        City city = new City();
+        city.setId(request.getCityId());
+        existing.setCity(city);
 
-        existing.setEmail(data.getEmail());
-        existing.setMobile(data.getMobile());
-        existing.setPhone(data.getPhone());
-        existing.setAddress(data.getAddress());
-        existing.setCity(data.getCity());
-
+        // 4. Guardamos los cambios
         return thirdPartyRepository.save(existing);
     }
 

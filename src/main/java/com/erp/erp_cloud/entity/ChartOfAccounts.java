@@ -1,8 +1,10 @@
 package com.erp.erp_cloud.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.ToString;
+
 
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -18,72 +20,53 @@ import java.util.List;
         }
 )
 @Data
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) // Avoid proxy errors
 public class ChartOfAccounts implements Serializable {
-
-    // =========================
-    // IDENTIFICACIÓN
-    // =========================
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     /**
-     * Empresa dueña del plan de cuentas
+     * Company that owns the chart of accounts
      */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "company_id", nullable = false)
+    @JsonIgnore
     private Company company;
 
-    /**
-     * Código contable (110505, 413505, etc.)
-     * Único por empresa
-     */
+
     @Column(name = "code", nullable = false, length = 20)
     private String code;
 
     /**
-     * Nombre de la cuenta
+     * account name
      */
     @Column(name = "name", nullable = false, length = 150)
     private String name;
 
-    /**
-     * Nivel contable
-     */
+
     @Column(nullable = false)
     private Byte level;
 
-    /**
-     * Naturaleza contable:
-     * D = Debit
-     * C = Credit
-     */
-    @Column(nullable = false, length = 1)
-    private String nature;
 
-    // =========================
-    // CLASIFICACIÓN CONTABLE
-    // =========================
+    @Column(nullable = false, length = 1)
+    private String nature; //D or C (debit or credit)
+
 
     @Column(nullable = false, length = 20)
     private String accountClass;
 
-  //  Tipo financiero:   * Corriente, No Corriente, Resultados, etc.
+
 
 
     @Column(length = 20)
-    private String accountType;
+    private String accountType; // * Corriente, No Corriente, Resultados, etc.
 
-    /**
-     * Cuenta de movimiento o título
-     */
+
     @Column(nullable = false)
-    private Boolean postingAccount;
+    private Boolean postingAccount;// true = allows movements
 
-    // =========================
-    // REGLAS CONTABLES
-    // =========================
 
     @Column(nullable = false)
     private Boolean requiresThirdParty = false;
@@ -94,24 +77,24 @@ public class ChartOfAccounts implements Serializable {
     @Column(nullable = false)
     private Boolean requiresSubCostCenter = false;
 
-    /**
-     * Cuenta activa / inactiva
-     */
     @Column(nullable = false)
     private Boolean active = true;
 
     // =========================
-    // JERARQUÍA
+    // hierarchy
     // =========================
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
+    @JsonIgnoreProperties("children") // Prevent the father from bringing the children back when he sees them.
     private ChartOfAccounts parent;
 
     @OneToMany(
             mappedBy = "parent",
-            cascade = {CascadeType.PERSIST, CascadeType.MERGE},
             fetch = FetchType.LAZY
     )
+
+    @JsonIgnore // For now, we're ignoring children to make the GET request fast and non-recursive.
     private List<ChartOfAccounts> children = new ArrayList<>();
+
 }
