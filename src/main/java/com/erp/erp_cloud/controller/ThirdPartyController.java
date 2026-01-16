@@ -1,7 +1,6 @@
 package com.erp.erp_cloud.controller;
 
 import com.erp.erp_cloud.dto.ThirdPartyRequest;
-import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.service.ThirdPartyService;
 import jakarta.validation.Valid;
@@ -11,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+
 @RestController
 @RequestMapping("/api/third-parties")
 @RequiredArgsConstructor
@@ -18,62 +18,49 @@ public class ThirdPartyController {
 
     private final ThirdPartyService thirdPartyService;
 
+    /**
+     * Creates a new Third Party.
+     * The mapping from Request DTO to Entity is handled within the Service layer.
+     */
     @PostMapping
     public ResponseEntity<ThirdParty> create(@Valid @RequestBody ThirdPartyRequest request) {
-        // 1. Convertimos el DTO a la Entidad
-        ThirdParty thirdParty = new ThirdParty();
-
-        // Mapeo de campos básicos
-        thirdParty.setDocumentNumber(request.getDocumentNumber());
-        thirdParty.setDocumentType(request.getDocumentType());
-        thirdParty.setVerificationDigit(request.getVerificationDigit());
-        thirdParty.setPersonType(request.getPersonType());
-        thirdParty.setTaxRegime(request.getTaxRegime());
-        thirdParty.setFirstName(request.getFirstName());
-        thirdParty.setMiddleName(request.getMiddleName());
-        thirdParty.setLastName(request.getLastName());
-        thirdParty.setSecondLastName(request.getSecondLastName());
-        thirdParty.setBusinessName(request.getBusinessName());
-        thirdParty.setEmail(request.getEmail());
-        thirdParty.setMobile(request.getMobile());
-        thirdParty.setPhone(request.getPhone());
-        thirdParty.setAddress(request.getAddress());
-
-        // 2. Cargamos la relación de la Ciudad (evita el error de city_id null)
-        City city = new City();
-        city.setId(request.getCityId());
-        thirdParty.setCity(city);
-
-        // 3. El servicio se encarga de la Company y el guardado
-        ThirdParty saved = thirdPartyService.create(thirdParty);
-
+        // We pass the Request DTO directly to the service
+        ThirdParty saved = thirdPartyService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
-
+    /**
+     * Retrieves all third parties associated with the active company context.
+     */
     @GetMapping
     public ResponseEntity<List<ThirdParty>> listAll() {
         return ResponseEntity.ok(thirdPartyService.listAll());
     }
 
+    /**
+     * Finds a specific third party by its internal database ID.
+     */
     @GetMapping("/{id}")
     public ResponseEntity<ThirdParty> getById(@PathVariable Long id) {
         return ResponseEntity.ok(thirdPartyService.findById(id));
     }
 
+    /**
+     * Finds a third party by its document number (e.g., NIT, RUT, DNI).
+     */
     @GetMapping("/document/{documentNumber}")
-    public ResponseEntity<ThirdParty> getByDocumentNumber(
-            @PathVariable String documentNumber
-    ) {
-        return ResponseEntity.ok(
-                thirdPartyService.getByDocumentNumber(documentNumber)
-        );
+    public ResponseEntity<ThirdParty> getByDocumentNumber(@PathVariable String documentNumber) {
+        return ResponseEntity.ok(thirdPartyService.getByDocumentNumber(documentNumber));
     }
 
+    /**
+     * Updates an existing third party's information.
+     */
     @PutMapping("/{id}")
-    public ResponseEntity<ThirdParty> update(@PathVariable Long id, @Valid @RequestBody ThirdPartyRequest request) {
+    public ResponseEntity<ThirdParty> update(
+            @PathVariable Long id,
+            @Valid @RequestBody ThirdPartyRequest request) {
         ThirdParty updated = thirdPartyService.update(id, request);
         return ResponseEntity.ok(updated);
     }
-
 }

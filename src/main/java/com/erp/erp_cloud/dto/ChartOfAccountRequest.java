@@ -9,17 +9,17 @@ import lombok.Data;
 public class ChartOfAccountRequest {
 
     @NotBlank(message = "Account code is required")
-    @Size(max = 20)
+    @Size(max = 20, message = "Code cannot exceed 20 characters")
     private String code;
 
     @NotBlank(message = "Account name is required")
-    @Size(max = 150)
+    @Size(max = 150, message = "Name cannot exceed 150 characters")
     private String name;
 
-    @NotNull(message = "Level is required")
+    // Optional in DTO because the Service calculates it automatically based on parent
     private Byte level;
 
-    @NotBlank(message = "Nature (D/C) is required")
+    @NotBlank(message = "Nature is required (D for Debit, C for Credit)")
     @Size(min = 1, max = 1)
     private String nature;
 
@@ -29,12 +29,14 @@ public class ChartOfAccountRequest {
     private String accountType;
 
     @NotNull(message = "Posting account flag is required")
-    private Boolean postingAccount;
+    private Boolean postingAccount; // true = auxiliary account (allows movements)
 
     private Boolean requiresThirdParty = false;
     private Boolean requiresCostCenter = false;
     private Boolean requiresSubCostCenter = false;
 
-    // We only need the ID to establish the hierarchy
+    private Boolean active = true;
+
+    // ID of the parent account for hierarchy
     private Long parentId;
 }

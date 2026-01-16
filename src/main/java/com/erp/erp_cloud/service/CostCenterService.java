@@ -50,6 +50,41 @@ public class CostCenterService {
 
         return repository.save(costCenter);
     }
+
+
+    @Transactional
+    public CostCenter update(Long id, CostCenterRequest request) {
+        // Check if the cost center exists
+        CostCenter costCenter = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Cost Center not found with id: " + id));
+
+        // Update basic information
+        costCenter.setCode(request.getCode());
+        costCenter.setName(request.getName());
+        costCenter.setAllowsMovement(request.isAllowsMovement());
+        costCenter.setActive(request.isActive());
+
+        // Hierarchy logic: Check if the parent has changed
+        if (request.getParentId() != null) {
+            // Only update if the parent is actually different from the current one
+            if (costCenter.getParent() == null || !costCenter.getParent().getId().equals(request.getParentId())) {
+                CostCenter newParent = repository.findById(request.getParentId())
+                        .orElseThrow(() -> new RuntimeException("New parent not found"));
+
+                costCenter.setParent(newParent);
+                // Set level based on the new parent's position
+                costCenter.setLevel(newParent.getLevel() + 1);
+            }
+        } else {
+            // If parentId is null, it becomes a root element (Level 1)
+            costCenter.setParent(null);
+            costCenter.setLevel(1);
+        }
+
+        // Save and return the updated entity
+        return repository.save(costCenter);
+    }
+
     // Get root cost centers for the current company
     @Transactional(readOnly = true)
     public List<CostCenter> getRoots() {

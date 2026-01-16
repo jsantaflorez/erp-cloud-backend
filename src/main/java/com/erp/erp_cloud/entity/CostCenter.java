@@ -34,14 +34,15 @@ public class CostCenter implements Serializable {
     private boolean active = true;
 
     @Column(name = "allows_movement")
-    private boolean allowsMovement; // Indica si se puede usar en asientos
+    private boolean allowsMovement; // Indicates whether it can be used in accounting entries
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
     @JsonIgnoreProperties("children")
     private CostCenter parent;
 
-    @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "parent")
+    @JsonIgnoreProperties("parent") //
     private List<CostCenter> children;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)

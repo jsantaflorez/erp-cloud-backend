@@ -40,5 +40,15 @@ public class CostCenterController {
     @PostMapping
     public ResponseEntity<CostCenter> create(@RequestBody CostCenterRequest request) {
         return new ResponseEntity<>(service.create(request), HttpStatus.CREATED);
+
     }
+
+
+    // Update an existing cost center
+    @PutMapping("/{id}")
+    public ResponseEntity<CostCenter> update(@PathVariable Long id, @RequestBody CostCenterRequest request) {
+        return ResponseEntity.ok(service.update(id, request));
+    }
+
+
 }

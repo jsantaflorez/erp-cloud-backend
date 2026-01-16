@@ -67,10 +67,10 @@ public class ThirdParty implements Serializable {
     @Column(name = "email", length = 150)
     private String email;
 
-    @Column(name = "mobile", length = 20)
+    @Column(name = "mobile", length = 100)
     private String mobile;
 
-    @Column(name = "phone", length = 20)
+    @Column(name = "phone", length = 100)
     private String phone;
 
     @Column(name = "address", length = 200)
@@ -83,4 +83,11 @@ public class ThirdParty implements Serializable {
 
     @Column(name = "active", nullable = false)
     private Boolean active = true;
+
+    // Optional: Default cost center for automatic accounting suggestions
+// Useful for employees (department) or specific providers (projects)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cost_center_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "parent", "children"})
+    private CostCenter defaultCostCenter;
 }

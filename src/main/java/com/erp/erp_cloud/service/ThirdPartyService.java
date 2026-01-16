@@ -3,6 +3,7 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.ThirdPartyRequest;
 import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
@@ -20,28 +21,30 @@ import java.util.List;
 public class ThirdPartyService {
 
     private final ThirdPartyRepository thirdPartyRepository;
-    private final CompanyContext companyContext; // contexto de empresa activa
+    private final CompanyContext companyContext;
 
     // =====================================================
     // CREATE
     // =====================================================
-    public ThirdParty create(ThirdParty thirdParty) {
-
+    public ThirdParty create(ThirdPartyRequest request) {
+        // Get the current active company from security context
         Company company = companyContext.getCurrentCompany();
 
+        // Check if the document number already exists for this company
         boolean exists = thirdPartyRepository
-                .existsByCompanyAndDocumentNumber(
-                        company,
-                        thirdParty.getDocumentNumber()
-                );
+                .existsByCompanyAndDocumentNumber(company, request.getDocumentNumber());
 
         if (exists) {
-            throw new IllegalStateException(
-                    "Third party already exists for this company"
-            );
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Third party already exists for this company");
         }
 
-        thirdParty.setId(null); // seguridad
+        ThirdParty thirdParty = new ThirdParty();
+
+        // Map request data to the entity
+        mapRequestToEntity(request, thirdParty);
+
+        // Set mandatory context fields
         thirdParty.setCompany(company);
         thirdParty.setActive(true);
 
@@ -53,77 +56,93 @@ public class ThirdPartyService {
     // =====================================================
     @Transactional(readOnly = true)
     public List<ThirdParty> listAll() {
-        // 1. Obtenemos la empresa del contexto (seguridad)
+        // Retrieve all third parties belonging to the current company
         Company company = companyContext.getCurrentCompany();
-
-        // 2. Llamamos al método del repository que acabamos de crear
         return thirdPartyRepository.findByCompany(company);
     }
 
     @Transactional(readOnly = true)
-    public ThirdParty getByDocumentNumber(String documentNumber) {
-
-        Company company = companyContext.getCurrentCompany();
-
-        return thirdPartyRepository
-                .findByCompanyAndDocumentNumber(company, documentNumber)
-                .orElseThrow(() ->
-                        new IllegalStateException("Third party not found"));
-    }
-    @Transactional(readOnly = true)
     public ThirdParty findById(Long id) {
         Company company = companyContext.getCurrentCompany();
 
+        // Find by ID and ensure it belongs to the active company
         return thirdPartyRepository.findById(id)
                 .filter(tp -> tp.getCompany().getId().equals(company.getId()))
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Third party with ID " + id + " not found for this company"));
+    }
 
+    @Transactional(readOnly = true)
+    public ThirdParty getByDocumentNumber(String documentNumber) {
+        Company company = companyContext.getCurrentCompany();
+
+        return thirdPartyRepository
+                .findByCompanyAndDocumentNumber(company, documentNumber)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Third party with document " + documentNumber + " not found"));
     }
 
     // =====================================================
     // UPDATE
     // =====================================================
-    @Transactional
     public ThirdParty update(Long id, ThirdPartyRequest request) {
-        // 1. Buscamos el tercero existente usando el método que ya validaba la empresa
+        // Validate existence and company ownership
         ThirdParty existing = findById(id);
 
-        // 2. Actualizamos los campos desde el Request
-        existing.setDocumentNumber(request.getDocumentNumber());
-        existing.setDocumentType(request.getDocumentType());
-        existing.setVerificationDigit(request.getVerificationDigit());
-        existing.setPersonType(request.getPersonType());
-        existing.setTaxRegime(request.getTaxRegime());
-        existing.setFirstName(request.getFirstName());
-        existing.setMiddleName(request.getMiddleName());
-        existing.setLastName(request.getLastName());
-        existing.setSecondLastName(request.getSecondLastName());
-        existing.setBusinessName(request.getBusinessName());
-        existing.setEmail(request.getEmail());
-        existing.setPhone(request.getPhone());
-        existing.setMobile(request.getMobile());
-        existing.setAddress(request.getAddress());
+        // Map updated data
+        mapRequestToEntity(request, existing);
 
-        // 3. Actualizamos la ciudad
-        City city = new City();
-        city.setId(request.getCityId());
-        existing.setCity(city);
-
-        // 4. Guardamos los cambios
         return thirdPartyRepository.save(existing);
     }
 
     // =====================================================
-    // ENABLE / DISABLE (ERP real)
+    // HELPER METHODS (Private)
+    // =====================================================
+    /**
+     * Maps data from a ThirdPartyRequest DTO to a ThirdParty Entity.
+     * This avoids code duplication between create and update methods.
+     */
+    private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity) {
+        entity.setDocumentNumber(request.getDocumentNumber());
+        entity.setDocumentType(request.getDocumentType());
+        entity.setVerificationDigit(request.getVerificationDigit());
+        entity.setPersonType(request.getPersonType());
+        entity.setTaxRegime(request.getTaxRegime());
+        entity.setFirstName(request.getFirstName());
+        entity.setMiddleName(request.getMiddleName());
+        entity.setLastName(request.getLastName());
+        entity.setSecondLastName(request.getSecondLastName());
+        entity.setBusinessName(request.getBusinessName());
+        entity.setEmail(request.getEmail());
+        entity.setPhone(request.getPhone());
+        entity.setMobile(request.getMobile());
+        entity.setAddress(request.getAddress());
+
+        // City handling (Referential integrity depends on cityId existing in DB)
+        City city = new City();
+        city.setId(request.getCityId());
+        entity.setCity(city);
+
+        // Optional: Link default Cost Center if provided
+        if (request.getDefaultCostCenterId() != null) {
+            CostCenter cc = new CostCenter();
+            cc.setId(request.getDefaultCostCenterId());
+            entity.setDefaultCostCenter(cc);
+        } else {
+            entity.setDefaultCostCenter(null);
+        }
+    }
+
+    // =====================================================
+    // STATUS MANAGEMENT
     // =====================================================
     public void deactivate(Long id) {
-        ThirdParty thirdParty = findById(id);
-        thirdParty.setActive(false);
+        ThirdParty tp = findById(id);
+        tp.setActive(false);
     }
 
     public void activate(Long id) {
-        ThirdParty thirdParty = findById(id);
-        thirdParty.setActive(true);
+        ThirdParty tp = findById(id);
+        tp.setActive(true);
     }
 }
