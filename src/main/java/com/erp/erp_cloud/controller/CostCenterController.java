@@ -51,4 +51,12 @@ public class CostCenterController {
     }
 
 
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        // Calling the service method
+        service.delete(id);
+        return ResponseEntity.noContent().build(); // 204 No Content for successful deletions
+    }
+
 }
