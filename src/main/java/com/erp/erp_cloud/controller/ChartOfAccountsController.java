@@ -107,6 +107,18 @@ public class ChartOfAccountsController {
 
 
     /**
+     * Delete an account
+     */
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        // Calling the service method we just armored
+        service.delete(id);
+        return ResponseEntity.noContent().build(); // 204 No Content for successful deletions
+    }
+
+
+    /**
      * Deactivate an account (Logical delete)
      */
     @PatchMapping("/{id}/deactivate")

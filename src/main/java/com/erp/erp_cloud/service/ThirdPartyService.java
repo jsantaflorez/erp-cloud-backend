@@ -133,6 +133,27 @@ public class ThirdPartyService {
         }
     }
 
+    @Transactional
+    public void delete(Long id) {
+        // 1. Find the third party using the service's internal findById (validates company ownership)
+        ThirdParty entity = this.findById(id);
+
+        // 2. TODO: Check for accounting movements in the ledger [cite: 2026-01-17]
+        // if (movementRepository.existsByThirdParty(entity)) {
+        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+        //        "Cannot delete Third Party because it has linked accounting movements.");
+        // }
+
+        // 3. TODO: Check for initial balances in the Third Party Balance table [cite: 2026-01-17]
+        // if (thirdPartyBalanceRepository.hasInitialBalance(entity)) {
+        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+        //        "Cannot delete Third Party because it has an opening balance.");
+        // }
+
+        // 4. Perform the deletion
+        thirdPartyRepository.delete(entity);
+    }
+
     // =====================================================
     // STATUS MANAGEMENT
     // =====================================================

@@ -63,4 +63,12 @@ public class ThirdPartyController {
         ThirdParty updated = thirdPartyService.update(id, request);
         return ResponseEntity.ok(updated);
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        // Corrected variable name to match the one declared at the top
+        thirdPartyService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
 }

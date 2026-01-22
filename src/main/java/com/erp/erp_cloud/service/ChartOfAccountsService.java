@@ -20,6 +20,7 @@ public class ChartOfAccountsService {
 
     private final ChartOfAccountsRepository repository;
     private final CompanyContext companyContext;
+
     /**
      * Create a new account entry with strict accounting structure validations.
      */
@@ -41,12 +42,16 @@ public class ChartOfAccountsService {
                     .filter(p -> p.getCompany().getId().equals(company.getId()))
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent account not found"));
 
-            // BUSINESS RULE: Auxiliary accounts (posting) cannot have children
+            // 2.1 BUSINESS RULE: Auxiliary accounts (posting) cannot have children
             if (Boolean.TRUE.equals(parent.getPostingAccount())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Cannot add children to a posting account");
             }
-
+            // 2.2 BUSINESS RULE: Consistency check - Child must match parent's class [cite: 2026-01-14]
+            if (!parent.getAccountClass().equals(request.getAccountClass())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Account class mismatch. Expected: " + parent.getAccountClass());
+            }
             account.setParent(parent);
             account.setLevel((byte) (parent.getLevel() + 1));
         } else {
@@ -54,8 +59,8 @@ public class ChartOfAccountsService {
             account.setLevel((byte) 1);
         }
 
-        // 3. NEW: Validate code length structure (1 -> 2 -> 4 -> 6)
-        validateCodeStructure(parent, request.getCode());
+        // 3. NEW: Validate code length and posting rules [cite: 2026-01-14]
+        validateCodeStructure(parent, request);
 
         // 4. Map DTO to Entity and save
         mapDtoToEntity(request, account);
@@ -66,14 +71,108 @@ public class ChartOfAccountsService {
     }
 
     /**
+     * Update existing account details with business rules.
+     */
+
+    public ChartOfAccounts update(Long id, ChartOfAccountRequest request) {
+        // 1. Find existing account and verify company ownership
+        ChartOfAccounts existing = findById(id);
+
+        // 2. BLOCK: Code change is strictly forbidden in accounting [cite: 2026-01-14]
+        if (!existing.getCode().equals(request.getCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The account code cannot be modified. If the code is wrong, you must create a new one.");
+        }
+
+        // 3. Handle Hierarchy and Level recalculation
+        ChartOfAccounts parent = null;
+        if (request.getParentId() != null) {
+            if (id.equals(request.getParentId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An account cannot be its own parent");
+            }
+
+            parent = repository.findById(request.getParentId())
+                    .filter(p -> p.getCompany().getId().equals(existing.getCompany().getId()))
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid parent account"));
+
+            if (Boolean.TRUE.equals(parent.getPostingAccount())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent cannot be a posting account");
+            }
+
+            // 3.1 NEW: Ensure class consistency with parent even on update [cite: 2026-01-14]
+            if (!parent.getAccountClass().equals(request.getAccountClass())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Account class mismatch. Expected: " + parent.getAccountClass());
+            }
+
+            existing.setParent(parent);
+            existing.setLevel((byte) (parent.getLevel() + 1));
+        } else {
+            existing.setParent(null);
+            existing.setLevel((byte) 1);
+        }
+
+        // 4. Validate code structure for the update
+        validateCodeStructure(parent, request);
+
+        // 5. Update the rest of the fields
+        mapDtoToEntity(request, existing);
+
+        return repository.save(existing);
+
+        // 6. TODO: Safety check for accounting flags [cite: 2026-01-17]
+        // If the user is trying to DISABLE a requirement (ThirdParty, CostCenter, etc.)
+      //  if (existing.getRequiresThirdParty() && !request.getRequiresThirdParty()) {
+            // if (movementRepository.existsWithThirdParty(existing)) {
+            //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+            //        "Cannot disable Third Party requirement because movements already exist.");
+            // }
+      //  }
+
+        // Repeat the logic for CostCenter and SubCostCenter [cite: 2026-01-17]
+    }
+    public void delete(Long id) {
+        // 1. Find existing account
+        ChartOfAccounts account = findById(id);
+
+        // 2. BLOCK: Prevent deleting accounts with children [cite: 2026-01-14]
+        boolean hasChildren = repository.existsByParent(account);
+        if (hasChildren) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot delete account because it has sub-accounts (children).");
+        }
+
+        // 3. TODO: Check for accounting movements [cite: 2026-01-17]
+        // if (movementRepository.existsByAccount(account)) {
+        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account has movements");
+        // }
+
+        // 4. TODO: Check for non-zero initial balances [cite: 2026-01-17]
+        // if (balanceRepository.hasInitialBalance(account)) {
+        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account has initial balances");
+        // }
+
+        repository.delete(account);
+    }
+
+
+
+    /**
      * Validates the accounting code length based on PUC standards:
      * Level 1: 1 digit
      * Level 2: 2 digits
      * Level 3: 4 digits
-     * Level 4+: Parent length + 2
+     * Level 4+: Parent length + 2 (Min 6 digits for posting) [cite: 2026-01-14]
      */
-    private void validateCodeStructure(ChartOfAccounts parent, String code) {
+    private void validateCodeStructure(ChartOfAccounts parent, ChartOfAccountRequest request) {
+        String code = request.getCode();
         int codeLength = code.length();
+
+        // Rule: Posting accounts must have at least 6 digits (Level 4) [cite: 2026-01-14]
+        if (Boolean.TRUE.equals(request.getPostingAccount()) && codeLength < 6) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Posting accounts (auxiliaries) must have at least 6 digits (Level 4)");
+        }
 
         // Root validation (Level 1)
         if (parent == null) {
@@ -87,18 +186,17 @@ public class ChartOfAccountsService {
         int parentLength = parent.getCode().length();
         boolean isValidJump = false;
 
-        // Jump from Level 1 to Level 2 (1 digit -> 2 digits)
+        // PUC structure: 1 -> 2 -> 4 -> 6...
         if (parentLength == 1 && codeLength == 2) isValidJump = true;
-            // Jump from Level 2 to Level 3 (2 digits -> 4 digits)
         else if (parentLength == 2 && codeLength == 4) isValidJump = true;
-            // Jump from Level 3 onwards (Current + 2 digits)
         else if (parentLength >= 4 && codeLength == parentLength + 2) isValidJump = true;
 
         if (!isValidJump) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Invalid code length for the selected parent. Structure must follow: 1 -> 2 -> 4 -> 6 digits.");
+                    "Invalid code length for the selected parent. Structure: 1 -> 2 -> 4 -> 6 digits.");
         }
     }
+
     /**
      * Read and Search operations
      */
@@ -110,7 +208,7 @@ public class ChartOfAccountsService {
     }
 
     @Transactional(readOnly = true)
-     public ChartOfAccounts findById(Long id) {
+    public ChartOfAccounts findById(Long id) {
         Company company = companyContext.getCurrentCompany();
         return repository.findById(id)
                 .filter(acc -> acc.getCompany().getId().equals(company.getId()))
@@ -129,12 +227,9 @@ public class ChartOfAccountsService {
         return repository.findByCompanyAndParentIdOrderByCodeAsc(company, parentId);
     }
 
-
-
     @Transactional(readOnly = true)
     public List<ChartOfAccounts> listPostingAccounts() {
         Company company = companyContext.getCurrentCompany();
-        // Use the new, cleaner repository method
         return repository.findPostingAccounts(company);
     }
 
@@ -150,68 +245,18 @@ public class ChartOfAccountsService {
         return repository.findByCompanyAndLevelAndActiveTrueOrderByCodeAsc(company, level);
     }
 
-
-    /**
-     * List all accounts for the current company (Full Catalog)
-     */
     @Transactional(readOnly = true)
     public List<ChartOfAccounts> listAll() {
         Company company = companyContext.getCurrentCompany();
-
-        // We order by code so the hierarchy makes sense visually in a flat list
         return repository.findByCompanyOrderByCodeAsc(company);
-    }
-    /**
-     * Update existing account details with business rules
-     */
-    public ChartOfAccounts update(Long id, ChartOfAccountRequest request) {
-        // 1. Find existing account and verify company ownership
-        ChartOfAccounts existing = findById(id);
-
-        // 2. Validate Code Uniqueness if it's being changed
-        if (!existing.getCode().equals(request.getCode())) {
-            boolean codeExists = repository.existsByCompanyAndCode(existing.getCompany(), request.getCode());
-            if (codeExists) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Account code " + request.getCode() + " is already in use");
-            }
-        }
-
-        // 3. Handle Hierarchy and Level recalculation (This sets the level)
-        if (request.getParentId() != null) {
-            if (id.equals(request.getParentId())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An account cannot be its own parent");
-            }
-
-            ChartOfAccounts parent = repository.findById(request.getParentId())
-                    .filter(p -> p.getCompany().getId().equals(existing.getCompany().getId()))
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid parent account"));
-
-            if (Boolean.TRUE.equals(parent.getPostingAccount())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent cannot be a posting account");
-            }
-
-            existing.setParent(parent);
-            existing.setLevel((byte) (parent.getLevel() + 1));
-        } else {
-            existing.setParent(null);
-            existing.setLevel((byte) 1);
-        }
-
-        // 4. Update the rest of the fields (Careful: this must not overwrite 'level')
-        mapDtoToEntity(request, existing);
-
-        return repository.save(existing);
     }
 
     /**
      * Helper method for common mapping.
-     * LEVEL is excluded because it's calculated by the Service logic.
      */
     private void mapDtoToEntity(ChartOfAccountRequest dto, ChartOfAccounts entity) {
         entity.setCode(dto.getCode());
         entity.setName(dto.getName());
-        // entity.setLevel is NOT set here to avoid null overwrites
         entity.setNature(dto.getNature());
         entity.setAccountClass(dto.getAccountClass());
         entity.setAccountType(dto.getAccountType());
@@ -224,9 +269,7 @@ public class ChartOfAccountsService {
             entity.setActive(dto.getActive());
         }
     }
-    /**
-     * Logical activation/deactivation
-     */
+
     public void deactivate(Long id) {
         ChartOfAccounts account = findById(id);
         account.setActive(false);

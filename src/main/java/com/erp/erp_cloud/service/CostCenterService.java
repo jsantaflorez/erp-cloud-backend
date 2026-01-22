@@ -1,13 +1,16 @@
 package com.erp.erp_cloud.service;
+
 import com.erp.erp_cloud.dto.CostCenterRequest;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.Company;
-
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
 import java.util.List;
 
 @Service
@@ -17,14 +20,12 @@ public class CostCenterService {
     private final CostCenterRepository repository;
     private final CompanyContext companyContext;
 
-    // List all cost centers for the current company
     @Transactional(readOnly = true)
     public List<CostCenter> listAll() {
         Company company = companyContext.getCurrentCompany();
         return repository.findByCompanyOrderByCodeAsc(company);
     }
 
-    // Create a new cost center using DTO
     @Transactional
     public CostCenter create(CostCenterRequest request) {
         CostCenter costCenter = new CostCenter();
@@ -32,14 +33,11 @@ public class CostCenterService {
         costCenter.setName(request.getName());
         costCenter.setAllowsMovement(request.isAllowsMovement());
         costCenter.setActive(request.isActive());
-
-        // Force assignment of current company from context
         costCenter.setCompany(companyContext.getCurrentCompany());
 
-        // Hierarchy and level logic
         if (request.getParentId() != null) {
             CostCenter parent = repository.findById(request.getParentId())
-                    .orElseThrow(() -> new RuntimeException("Parent cost center not found"));
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent cost center not found"));
 
             costCenter.setParent(parent);
             costCenter.setLevel(parent.getLevel() + 1);
@@ -51,55 +49,68 @@ public class CostCenterService {
         return repository.save(costCenter);
     }
 
-
     @Transactional
     public CostCenter update(Long id, CostCenterRequest request) {
-        // Check if the cost center exists
-        CostCenter costCenter = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Cost Center not found with id: " + id));
+        CostCenter costCenter = findById(id);
 
-        // Update basic information
         costCenter.setCode(request.getCode());
         costCenter.setName(request.getName());
         costCenter.setAllowsMovement(request.isAllowsMovement());
         costCenter.setActive(request.isActive());
 
-        // Hierarchy logic: Check if the parent has changed
         if (request.getParentId() != null) {
-            // Only update if the parent is actually different from the current one
             if (costCenter.getParent() == null || !costCenter.getParent().getId().equals(request.getParentId())) {
                 CostCenter newParent = repository.findById(request.getParentId())
-                        .orElseThrow(() -> new RuntimeException("New parent not found"));
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "New parent not found"));
 
                 costCenter.setParent(newParent);
-                // Set level based on the new parent's position
                 costCenter.setLevel(newParent.getLevel() + 1);
             }
         } else {
-            // If parentId is null, it becomes a root element (Level 1)
             costCenter.setParent(null);
             costCenter.setLevel(1);
         }
 
-        // Save and return the updated entity
         return repository.save(costCenter);
     }
 
-    // Get root cost centers for the current company
+    @Transactional
+    public void delete(Long id) {
+        // 1. Find the entity using the service's internal findById (validates ownership)
+        CostCenter entity = this.findById(id);
+
+        // 2. BLOCK: Prevent deletion if the cost center has sub-centers [cite: 2026-01-14]
+        boolean hasChildren = repository.existsByParent(entity);
+        if (hasChildren) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot delete Cost Center because it has sub-centers.");
+        }
+
+        // 3. TODO: Add check for accounting movements before final deletion [cite: 2026-01-17]
+
+        repository.delete(entity);
+    }
+
     @Transactional(readOnly = true)
     public List<CostCenter> getRoots() {
         return repository.findByCompanyAndParentIsNull(companyContext.getCurrentCompany());
     }
 
-    // Get only centers that allow movement
     @Transactional(readOnly = true)
     public List<CostCenter> getMovementAccounts() {
         return repository.findByCompanyAndAllowsMovementTrue(companyContext.getCurrentCompany());
     }
 
-    // Get children of a specific parent
     @Transactional(readOnly = true)
     public List<CostCenter> getChildren(Long parentId) {
         return repository.findByParentId(parentId);
+    }
+
+    @Transactional(readOnly = true)
+    public CostCenter findById(Long id) {
+        Company company = companyContext.getCurrentCompany();
+        return repository.findById(id)
+                .filter(acc -> acc.getCompany().getId().equals(company.getId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cost Center not found"));
     }
 }

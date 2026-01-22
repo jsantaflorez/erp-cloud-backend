@@ -21,4 +21,7 @@ public interface CostCenterRepository extends JpaRepository<CostCenter, Long> {
 
     // Retrieves direct children of a specific parent cost center
     List<CostCenter> findByParentId(Long parentId);
+
+
+    boolean existsByParent(CostCenter parent);
 }

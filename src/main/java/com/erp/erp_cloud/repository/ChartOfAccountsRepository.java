@@ -56,4 +56,7 @@ public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts
      * Retrieves the complete catalog for a company ordered by accounting code
      */
     List<ChartOfAccounts> findByCompanyOrderByCodeAsc(Company company);
+
+
+    boolean existsByParent(ChartOfAccounts parent);
 }
