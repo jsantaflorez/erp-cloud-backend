@@ -14,6 +14,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 
 import java.util.List;
 
@@ -62,16 +65,26 @@ public class ThirdPartyService {
     // =====================================================
     // READ
     // =====================================================
+
+
     @Transactional(readOnly = true)
-    public List<ThirdParty> listAll() {
-        // Retrieve all third parties belonging to the current company
+    public Page<ThirdParty> listAll(String searchTerm, Pageable pageable) {
+        // Get the current active company from security context
         Company company = companyContext.getCurrentCompany();
-        return thirdPartyRepository.findByCompany(company);
+
+        // If search term is present, use the search repository method
+        if (searchTerm != null && !searchTerm.trim().isEmpty()) {
+            return thirdPartyRepository.findBySearchTerm(company, searchTerm, pageable);
+        }
+
+        // If no search term, return all third parties for the company with pagination
+        return thirdPartyRepository.findByCompany(company, pageable);
     }
 
     @Transactional(readOnly = true)
     public ThirdParty findById(Long id) {
         Company company = companyContext.getCurrentCompany();
+
 
         // Find by ID and ensure it belongs to the active company
         return thirdPartyRepository.findById(id)

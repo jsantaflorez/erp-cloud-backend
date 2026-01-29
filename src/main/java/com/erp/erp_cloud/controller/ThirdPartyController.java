@@ -5,11 +5,12 @@ import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.service.ThirdPartyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/third-parties")
@@ -24,17 +25,21 @@ public class ThirdPartyController {
      */
     @PostMapping
     public ResponseEntity<ThirdParty> create(@Valid @RequestBody ThirdPartyRequest request) {
-        // We pass the Request DTO directly to the service
+        // Pass the Request DTO directly to the service
         ThirdParty saved = thirdPartyService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
     /**
-     * Retrieves all third parties associated with the active company context.
+     * Retrieves a paginated list of third parties, optionally filtered by a search term.
+     * The search term covers names, business names, and document numbers.
      */
     @GetMapping
-    public ResponseEntity<List<ThirdParty>> listAll() {
-        return ResponseEntity.ok(thirdPartyService.listAll());
+    public ResponseEntity<Page<ThirdParty>> list(
+            @RequestParam(required = false) String search,
+            @PageableDefault(size = 10, sort = "lastName") Pageable pageable) {
+        // Pass both the search term and pagination settings to the service
+        return ResponseEntity.ok(thirdPartyService.listAll(search, pageable));
     }
 
     /**
@@ -64,11 +69,12 @@ public class ThirdPartyController {
         return ResponseEntity.ok(updated);
     }
 
+    /**
+     * Deletes a third party record by its ID.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        // Corrected variable name to match the one declared at the top
         thirdPartyService.delete(id);
         return ResponseEntity.noContent().build();
     }
-
 }
