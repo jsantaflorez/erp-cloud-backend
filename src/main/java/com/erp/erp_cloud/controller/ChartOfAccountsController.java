@@ -5,6 +5,9 @@ import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.service.ChartOfAccountsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,18 +22,26 @@ public class ChartOfAccountsController {
     private final ChartOfAccountsService service;
 
     /**
-     * Create a new account entry
+     * Create a new account entry.
      */
-
     @PostMapping
     public ResponseEntity<ChartOfAccounts> create(@Valid @RequestBody ChartOfAccountRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
     }
 
-
+    /**
+     * Get the full catalog or search with pagination.
+     * This replaces the old getAll and search by text.
+     */
+    @GetMapping
+    public ResponseEntity<Page<ChartOfAccounts>> list(
+            @RequestParam(required = false) String search,
+            @PageableDefault(size = 20, sort = "code") Pageable pageable) {
+        return ResponseEntity.ok(service.listAll(search, pageable));
+    }
 
     /**
-     * Get account by internal ID
+     * Get account by internal ID.
      */
     @GetMapping("/{id}")
     public ResponseEntity<ChartOfAccounts> getById(@PathVariable Long id) {
@@ -38,7 +49,7 @@ public class ChartOfAccountsController {
     }
 
     /**
-     * Get account by accounting code (e.g., 110505)
+     * Get account by accounting code.
      */
     @GetMapping("/code/{code}")
     public ResponseEntity<ChartOfAccounts> getByCode(@PathVariable String code) {
@@ -46,7 +57,8 @@ public class ChartOfAccountsController {
     }
 
     /**
-     * Get root accounts (Level 1 / no parent)
+     * Get root accounts (Level 1).
+     * Kept as List for tree-view purposes.
      */
     @GetMapping("/roots")
     public ResponseEntity<List<ChartOfAccounts>> getRoots() {
@@ -54,7 +66,7 @@ public class ChartOfAccountsController {
     }
 
     /**
-     * Get direct children of a specific account
+     * Get direct children of a specific account.
      */
     @GetMapping("/{parentId}/children")
     public ResponseEntity<List<ChartOfAccounts>> getChildren(@PathVariable Long parentId) {
@@ -62,64 +74,45 @@ public class ChartOfAccountsController {
     }
 
     /**
-     * Get active accounts allowed for journal entries (posting accounts)
+     * Get active accounts allowed for journal entries (posting accounts).
      */
     @GetMapping("/posting")
-    public ResponseEntity<List<ChartOfAccounts>> getPostingAccounts() {
-        return ResponseEntity.ok(service.listPostingAccounts());
+    public ResponseEntity<Page<ChartOfAccounts>> getPostingAccounts(
+            @PageableDefault(size = 20, sort = "code") Pageable pageable) {
+        return ResponseEntity.ok(service.listPostingAccounts(pageable));
     }
+
     /**
-     * Search accounts by name or code using a query string
-     */
-    @GetMapping("/search")
-    public ResponseEntity<List<ChartOfAccounts>> search(
-            @RequestParam(name = "q", defaultValue = "") String query
-    ) {
-        return ResponseEntity.ok(service.search(query));
-    }
-    /**
-     * Filter accounts by accounting level
+     * Filter accounts by accounting level with pagination.
      */
     @GetMapping("/level/{level}")
-    public ResponseEntity<List<ChartOfAccounts>> getByLevel(@PathVariable Byte level) {
-        return ResponseEntity.ok(service.listByLevel(level));
+    public ResponseEntity<Page<ChartOfAccounts>> getByLevel(
+            @PathVariable Byte level,
+            @PageableDefault(size = 20, sort = "code") Pageable pageable) {
+        return ResponseEntity.ok(service.listByLevel(level, pageable));
     }
 
     /**
-     * Get the full catalog of accounts for the current company
+     * Update existing account details.
      */
-    @GetMapping
-    public ResponseEntity<List<ChartOfAccounts>> getAll() {
-        return ResponseEntity.ok(service.listAll());
-    }
-
-    /**
-     * Update existing account details
-     */
-
     @PutMapping("/{id}")
     public ResponseEntity<ChartOfAccounts> update(
             @PathVariable Long id,
-            @Valid @RequestBody ChartOfAccountRequest request
-    ) {
+            @Valid @RequestBody ChartOfAccountRequest request) {
         return ResponseEntity.ok(service.update(id, request));
     }
 
-
     /**
-     * Delete an account
+     * Delete an account.
      */
-
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        // Calling the service method
         service.delete(id);
-        return ResponseEntity.noContent().build(); // 204 No Content for successful deletions
+        return ResponseEntity.noContent().build();
     }
 
-
     /**
-     * Deactivate an account (Logical delete)
+     * Deactivate an account (Logical delete).
      */
     @PatchMapping("/{id}/deactivate")
     public ResponseEntity<Void> deactivate(@PathVariable Long id) {
@@ -128,12 +121,11 @@ public class ChartOfAccountsController {
     }
 
     /**
-     * Activate a previously deactivated account
+     * Activate a previously deactivated account.
      */
     @PatchMapping("/{id}/activate")
     public ResponseEntity<Void> activate(@PathVariable Long id) {
         service.activate(id);
         return ResponseEntity.noContent().build();
     }
-
 }

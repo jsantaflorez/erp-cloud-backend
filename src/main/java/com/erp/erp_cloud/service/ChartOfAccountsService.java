@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 
 import java.util.List;
 
@@ -78,13 +81,23 @@ public class ChartOfAccountsService {
         // 1. Find existing account and verify company ownership
         ChartOfAccounts existing = findById(id);
 
-        // 2. BLOCK: Code change is strictly forbidden in accounting [cite: 2026-01-14]
+        // 2. Code change is strictly forbidden in accounting
         if (!existing.getCode().equals(request.getCode())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "The account code cannot be modified. If the code is wrong, you must create a new one.");
         }
 
-        // 3. Handle Hierarchy and Level recalculation
+
+        // 3. Inverse Cascade Validation
+        // If the user tries to set postingAccount to true, we must ensure it has no children
+        if (Boolean.TRUE.equals(request.getPostingAccount()) && !Boolean.TRUE.equals(existing.getPostingAccount())) {
+            if (repository.existsByParent(existing)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Cannot change to posting account because it already has sub-accounts (children).");
+            }
+        }
+
+        // 4. Handle Hierarchy and Level recalculation
         ChartOfAccounts parent = null;
         if (request.getParentId() != null) {
             if (id.equals(request.getParentId())) {
@@ -112,15 +125,14 @@ public class ChartOfAccountsService {
             existing.setLevel((byte) 1);
         }
 
-        // 4. Validate code structure for the update
+        // 5. Validate code structure for the update
         validateCodeStructure(parent, request);
 
-        // 5. Update the rest of the fields
+        // 6. Map the rest of the fields
         mapDtoToEntity(request, existing);
 
-        return repository.save(existing);
 
-        // 6. TODO: Safety check for accounting flags [cite: 2026-01-17]
+        // 7. TODO: Safety check for accounting flags [cite: 2026-01-17]
         // If the user is trying to DISABLE a requirement (ThirdParty, CostCenter, etc.)
       //  if (existing.getRequiresThirdParty() && !request.getRequiresThirdParty()) {
             // if (movementRepository.existsWithThirdParty(existing)) {
@@ -129,7 +141,8 @@ public class ChartOfAccountsService {
             // }
       //  }
 
-        // Repeat the logic for CostCenter and SubCostCenter [cite: 2026-01-17]
+        return repository.save(existing);
+
     }
     public void delete(Long id) {
         // 1. Find existing account
@@ -200,11 +213,16 @@ public class ChartOfAccountsService {
     /**
      * Read and Search operations
      */
+
     @Transactional(readOnly = true)
-    public ChartOfAccounts findByCode(String code) {
+    public Page<ChartOfAccounts> listAll(String searchTerm, Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyAndCode(company, code)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
+
+        if (searchTerm != null && !searchTerm.trim().isEmpty()) {
+            return repository.searchByText(company, searchTerm, pageable);
+        }
+
+        return repository.findByCompany(company, pageable);
     }
 
     @Transactional(readOnly = true)
@@ -215,41 +233,54 @@ public class ChartOfAccountsService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account not found"));
     }
 
+
+    @Transactional(readOnly = true)
+    public ChartOfAccounts findByCode(String code) {
+        Company company = companyContext.getCurrentCompany();
+        return repository.findByCompanyAndCode(company, code)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Account code not found"));
+    }
+
+    // Methods for specific UI needs (Tree view, etc.)
     @Transactional(readOnly = true)
     public List<ChartOfAccounts> listRoots() {
-        Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyAndParentIsNullOrderByCodeAsc(company);
+        return repository.findByCompanyAndParentIsNullOrderByCodeAsc(companyContext.getCurrentCompany());
     }
+
 
     @Transactional(readOnly = true)
     public List<ChartOfAccounts> listChildren(Long parentId) {
-        Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyAndParentIdOrderByCodeAsc(company, parentId);
+        return repository.findByCompanyAndParentIdOrderByCodeAsc(companyContext.getCurrentCompany(), parentId);
     }
 
+
+
+
+
+
+    /**
+     * Retrieves all accounts enabled for posting (auxiliaries)
+     * with pagination. Useful for accounting entry selectors.
+     */
     @Transactional(readOnly = true)
-    public List<ChartOfAccounts> listPostingAccounts() {
+    public Page<ChartOfAccounts> listPostingAccounts(Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
-        return repository.findPostingAccounts(company);
+        // Uses the paginated query from the repository
+        return repository.findPostingAccounts(company, pageable);
     }
 
+
+
+    /**
+     * Retrieves active accounts filtered by level with pagination support.
+     */
     @Transactional(readOnly = true)
-    public List<ChartOfAccounts> search(String text) {
+    public Page<ChartOfAccounts> listByLevel(Byte level, Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
-        return repository.searchByText(company, text);
+        // Updated to use the paginated repository method
+        return repository.findByCompanyAndLevelAndActiveTrue(company, level, pageable);
     }
 
-    @Transactional(readOnly = true)
-    public List<ChartOfAccounts> listByLevel(Byte level) {
-        Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyAndLevelAndActiveTrueOrderByCodeAsc(company, level);
-    }
-
-    @Transactional(readOnly = true)
-    public List<ChartOfAccounts> listAll() {
-        Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyOrderByCodeAsc(company);
-    }
 
     /**
      * Helper method for common mapping.

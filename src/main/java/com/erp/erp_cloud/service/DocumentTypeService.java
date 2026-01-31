@@ -23,28 +23,7 @@ public class DocumentTypeService {
     @Transactional(readOnly = true)
     public List<DocumentType> listAll() {
         // Filter by the active company context
-        return repository.findByCompany(companyContext.getCurrentCompany());
-    }
-
-    @Transactional
-    public DocumentType create(DocumentType documentType) {
-        Company company = companyContext.getCurrentCompany();
-
-        // 1. Validation: Ensure code uniqueness within the same company
-        if (repository.existsByCompanyAndCode(company, documentType.getCode())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Document code '" + documentType.getCode() + "' already exists for this company.");
-        }
-
-        // 2. Set the owner company
-        documentType.setCompany(company);
-
-        // 3. Ensure the consecutive starts at 0 if not specified (Entity also has default)
-        if (documentType.getCurrentConsecutive() == null) {
-            documentType.setCurrentConsecutive(0L);
-        }
-
-        return repository.save(documentType);
+        return repository.findByCompanyIdAndActiveTrue(companyContext.getCurrentCompany().getId());
     }
 
     @Transactional(readOnly = true)
@@ -56,30 +35,66 @@ public class DocumentTypeService {
                         "Document Type with ID " + id + " not found for your company"));
     }
 
+    @Transactional
+    public DocumentType create(DocumentType documentType) {
+        Company company = companyContext.getCurrentCompany();
+
+        if (repository.existsByCompanyAndCode(company, documentType.getCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Document code '" + documentType.getCode() + "' already exists for this company.");
+        }
+
+        documentType.setCompany(company);
+        if (documentType.getCurrentConsecutive() == null) {
+            documentType.setCurrentConsecutive(0L);
+        }
+
+        return repository.save(documentType);
+    }
+
+
+
     /**
      * Increments the consecutive and returns the next number.
-     * This will be called by the Accounting Movement logic later.
+     * Note: In a high-traffic production environment, we would add
+     * a Pessimistic Lock here to prevent duplicate numbers.
      */
     @Transactional
     public Long getNextConsecutive(Long id) {
         DocumentType dt = findById(id);
-
-        // Logical increment
         Long next = dt.getCurrentConsecutive() + 1;
         dt.setCurrentConsecutive(next);
-
         repository.save(dt);
         return next;
     }
 
     @Transactional
-    public void delete(Long id) {
+    public void deactivate(Long id) {
         DocumentType entity = findById(id);
+        entity.setActive(false);
+        repository.save(entity);
+    }
 
-        // TODO: Check if there are already accounting movements using this type [cite: 2026-01-17]
-        // if (movementRepository.existsByDocumentType(entity)) { ... }
+    @Transactional
+    public void resetConsecutive(Long id, Long newConsecutive) {
+        DocumentType existing = findById(id);
 
-        repository.delete(entity);
+        if (newConsecutive < existing.getCurrentConsecutive()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot assign a consecutive lower than the current one (" + existing.getCurrentConsecutive() + ").");
+        }
+
+        existing.setCurrentConsecutive(newConsecutive);
+        repository.save(existing);
+    }
+
+    // =====================================================
+    // SEARCH
+    // =====================================================
+    @Transactional(readOnly = true)
+    public List<DocumentType> searchByName(String name) {
+        Company company = companyContext.getCurrentCompany();
+        return repository.findByCompanyAndNameContainingIgnoreCase(company, name);
     }
 
 
@@ -112,32 +127,9 @@ public class DocumentTypeService {
         return repository.save(existing);
     }
 
-    @Transactional
-    public void resetConsecutive(Long id, Long newConsecutive) {
-        // Ownership and existence check through existing multi-tenant logic
-        DocumentType existing = findById(id);
 
-        // Integrity check: Preventing duplicate numbering or legal gaps by going backwards
-        if (newConsecutive < existing.getCurrentConsecutive()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "No se puede asignar un consecutivo menor al actual (" + existing.getCurrentConsecutive() + ").");
-        }
 
-        // Update the sequence pointer
-        existing.setCurrentConsecutive(newConsecutive);
-        repository.save(existing);
 
-        // TODO: Implement Audit Log entry for this critical administrative action
-    }
-
-    // =====================================================
-    // SEARCH
-    // =====================================================
-    @Transactional(readOnly = true)
-    public List<DocumentType> searchByName(String name) {
-        Company company = companyContext.getCurrentCompany();
-        return repository.findByCompanyAndNameContainingIgnoreCase(company, name);
-    }
 
 
 }
