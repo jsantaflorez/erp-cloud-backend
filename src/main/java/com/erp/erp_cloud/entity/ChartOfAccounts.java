@@ -65,20 +65,19 @@ public class ChartOfAccounts implements Serializable {
 
 
     @Column(nullable = false)
-    private Boolean postingAccount;// true = allows movements
+    private boolean postingAccount = false;// true = allows movements
+
+
+
+    @Column(nullable = false)
+    private boolean requiresThirdParty = false;
+
+    @Column(nullable = false)
+    private boolean requiresCostCenter = false;
 
 
     @Column(nullable = false)
-    private Boolean requiresThirdParty = false;
-
-    @Column(nullable = false)
-    private Boolean requiresCostCenter = false;
-
-    @Column(nullable = false)
-    private Boolean requiresSubCostCenter = false;
-
-    @Column(nullable = false)
-    private Boolean active = true;
+    private boolean active = true;
 
     // =========================
     // hierarchy
@@ -86,7 +85,7 @@ public class ChartOfAccounts implements Serializable {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
-    @JsonIgnoreProperties("children") // Prevent the father from bringing the children back when he sees them.
+    @JsonIgnoreProperties("children") // Prevent the parent from loading its children to avoid infinite recursion
     private ChartOfAccounts parent;
 
     @OneToMany(

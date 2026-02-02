@@ -46,7 +46,7 @@ public class ChartOfAccountsService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent account not found"));
 
             // 2.1 BUSINESS RULE: Auxiliary accounts (posting) cannot have children
-            if (Boolean.TRUE.equals(parent.getPostingAccount())) {
+            if (Boolean.TRUE.equals(parent.isPostingAccount())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Cannot add children to a posting account");
             }
@@ -90,7 +90,7 @@ public class ChartOfAccountsService {
 
         // 3. Inverse Cascade Validation
         // If the user tries to set postingAccount to true, we must ensure it has no children
-        if (Boolean.TRUE.equals(request.getPostingAccount()) && !Boolean.TRUE.equals(existing.getPostingAccount())) {
+        if (Boolean.TRUE.equals(request.getPostingAccount()) && !Boolean.TRUE.equals(existing.isPostingAccount())) {
             if (repository.existsByParent(existing)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Cannot change to posting account because it already has sub-accounts (children).");
@@ -108,7 +108,7 @@ public class ChartOfAccountsService {
                     .filter(p -> p.getCompany().getId().equals(existing.getCompany().getId()))
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid parent account"));
 
-            if (Boolean.TRUE.equals(parent.getPostingAccount())) {
+            if (Boolean.TRUE.equals(parent.isPostingAccount())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent cannot be a posting account");
             }
 
@@ -294,7 +294,7 @@ public class ChartOfAccountsService {
         entity.setPostingAccount(dto.getPostingAccount());
         entity.setRequiresThirdParty(dto.getRequiresThirdParty());
         entity.setRequiresCostCenter(dto.getRequiresCostCenter());
-        entity.setRequiresSubCostCenter(dto.getRequiresSubCostCenter());
+
 
         if (dto.getActive() != null) {
             entity.setActive(dto.getActive());
