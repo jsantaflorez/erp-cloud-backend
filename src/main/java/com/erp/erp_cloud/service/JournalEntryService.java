@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.JournalEntryRequest;
+import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
 import com.erp.erp_cloud.entity.JournalEntry;
 import com.erp.erp_cloud.entity.JournalEntryItem;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
@@ -33,7 +34,8 @@ public class JournalEntryService {
     // private final ThirdPartyService thirdPartyService;
 
     @Transactional
-    public JournalEntry create(JournalEntryRequest request) {
+
+    public JournalEntryResponseDTO create(JournalEntryRequest request) {
 
         // 1. Validate Items List Exists
 
@@ -46,18 +48,22 @@ public class JournalEntryService {
 
         // 3. Load DocumentType and assign consecutive (Separation of responsibilities)>
 
+
         var docType = docTypeService.findById(request.getDocumentTypeId());
+        if (!docType.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This Document Type does not belong to the tenant company.");
+        }
         JournalEntry entry = new JournalEntry();
         entry.setDocumentType(docType);
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
         entry.setCompany(companyContext.getCurrentCompany());
-
-        // Assign the number using the service method
-        entry.setConsecutive(docTypeService.getNextConsecutive(docType.getId()));
-
-
-
+// Assign the number using the service method
+        Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
+        entry.setConsecutive(nextNumber);
+// Build the unique string: Prefix + Number (e.g., "FV-1")
+        String formattedNumber = docType.getPrefix() + "-" + nextNumber;
+        entry.setDocumentNumber(formattedNumber);
 
 
         // 4. Map and Validate Items
@@ -66,46 +72,46 @@ public class JournalEntryService {
             validateItemAmounts(itemDto.getDebit(), itemDto.getCredit());
 
             JournalEntryItem item = new JournalEntryItem();
-
-
-            // 1. Fetch the Account (Critical)
-
-
+       // 5. Fetch the Account
             var account = accountRepository.findById(itemDto.getAccountId())
                     .filter(a -> a.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) // SECURITY
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                             "Account not found or access denied: " + itemDto.getAccountId()));
 
-
-
-            // 3. Check if it's a posting account (Your field name)
+        // 6. Check if it's a posting account
             if (!account.isPostingAccount()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Account " + account.getCode() + " is not a posting account.");
             }
-
-            // 4. Validate Third Party Requirement
+        // 7. Validate Third Party Requirement
             if (account.isRequiresThirdParty()) {
                 if (itemDto.getThirdPartyId() == null) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Account " + account.getCode() + " requires a Third Party.");
                 }
+
                 var thirdParty = thirdPartyRepository.findById(itemDto.getThirdPartyId())
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Third Party not found."));
+                        // SECURITY: Ensure the ThirdParty belongs to the active company
+                        .filter(tp -> tp.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                "Third Party not found or belongs to another company."));
                 item.setThirdParty(thirdParty);
+
             }
 
-            // 5. Validate Cost Center Requirement
+        // 8. Validate Cost Center Requirement
             if (account.isRequiresCostCenter()) {
                 if (itemDto.getCostCenterId() == null) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Account " + account.getCode() + " requires a Cost Center.");
                 }
-
                 var costCenter = costCenterRepository.findById(itemDto.getCostCenterId())
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cost Center not found."));
+                        // SECURITY: Ensure the Cost Center belongs to the active company
+                        .filter(cc -> cc.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                                "Cost Center not found or access denied."));
 
-                // VALIDATION: Check "allows_movement" flag
+            // VALIDATION: Check "allows_movement" flag
                 if (!costCenter.isAllowsMovement()) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "The Cost Center '" + costCenter.getName() + "' is a parent category and does not allow movements.");
@@ -113,22 +119,17 @@ public class JournalEntryService {
 
                 item.setCostCenter(costCenter);
             }
-
-
-
-
             item.setAccount(account);
-
             item.setDebit(Optional.ofNullable(itemDto.getDebit()).orElse(BigDecimal.ZERO));
             item.setCredit(Optional.ofNullable(itemDto.getCredit()).orElse(BigDecimal.ZERO));
             item.setDescription(itemDto.getDescription());
 
-            // TODO: Map IDs to entities (Account, ThirdParty, etc.)
             entry.addItem(item);
         }
 
 
-        return repository.save(entry);
+        JournalEntry savedEntry = repository.save(entry);
+        return mapToResponseDTO(savedEntry);
     }
 
 
@@ -163,6 +164,39 @@ public class JournalEntryService {
         if (!hasDebit && !hasCredit) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item must have either a debit or a credit greater than zero.");
         }
+    }
+    private JournalEntryResponseDTO mapToResponseDTO(JournalEntry entry) {
+        JournalEntryResponseDTO response = new JournalEntryResponseDTO();
+        response.setId(entry.getId());
+        response.setDocumentNumber(entry.getDocumentNumber());
+        response.setEntryDate(entry.getEntryDate());
+        response.setDescription(entry.getDescription());
+
+        List<JournalEntryResponseDTO.ItemResponse> itemDtos = entry.getItems().stream().map(item -> {
+            JournalEntryResponseDTO.ItemResponse itemDto = new JournalEntryResponseDTO.ItemResponse();
+            itemDto.setId(item.getId());
+            itemDto.setAccountCode(item.getAccount().getCode());
+            itemDto.setAccountName(item.getAccount().getName());
+            itemDto.setDebit(item.getDebit());
+            itemDto.setCredit(item.getCredit());
+
+
+
+            if (item.getThirdParty() != null) {
+                // Using legal name logic + document number
+                itemDto.setThirdPartyIdNumber(item.getThirdParty().getDocumentNumber());
+                itemDto.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
+            }
+
+            if (item.getCostCenter() != null) {
+                itemDto.setCostCenterName(item.getCostCenter().getName());
+            }
+
+            return itemDto;
+        }).toList();
+
+        response.setItems(itemDtos);
+        return response;
     }
 }
 

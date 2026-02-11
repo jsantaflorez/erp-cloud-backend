@@ -33,9 +33,7 @@ public class ThirdPartyService {
     // =====================================================
     // CREATE
     // =====================================================
-// =====================================================
-// CREATE - Corregido para validación de Centros de Costo
-// =====================================================
+
     public ThirdParty create(ThirdPartyRequest request) {
         // 1. Get the current active company from security context
         Company company = companyContext.getCurrentCompany();

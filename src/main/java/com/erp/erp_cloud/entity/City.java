@@ -18,7 +18,7 @@ public class City {
     private Long id;
 
     @Column(length = 10, unique = true)
-    private String code; // DANE o interno
+    private String code; // e.g.DANE CODE
 
     private String name;
 

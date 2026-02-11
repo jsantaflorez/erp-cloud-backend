@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.io.Serializable;
+import java.util.Optional;
 
 @Entity
 @Table(
@@ -90,4 +91,30 @@ public class ThirdParty implements Serializable {
     @JoinColumn(name = "cost_center_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "parent", "children"})
     private CostCenter defaultCostCenter;
+
+    public String getLegalDisplayName() {
+        // 1. Build the legal name parts
+        String legalName = String.join(" ",
+                Optional.ofNullable(firstName).orElse(""),
+                Optional.ofNullable(middleName).orElse(""),
+                Optional.ofNullable(lastName).orElse(""),
+                Optional.ofNullable(secondLastName).orElse("")
+        ).trim();
+
+        // 2. Check if the legal name is valid (not empty or just spaces)
+        if (!legalName.isBlank()) {
+            return legalName;
+        }
+
+        // 3. Fallback to business name if legal name is missing
+        if (this.businessName != null && !this.businessName.isBlank()) {
+            return this.businessName;
+        }
+
+        return "Unknown Third Party";
+    }
+    public String getFullIdentity() {
+        String id = (this.documentNumber != null) ? this.documentNumber : "No ID";
+        return id + " - " + this.getLegalDisplayName();
+    }
 }

@@ -72,11 +72,6 @@ public class ChartOfAccountsService {
 
         return repository.save(account);
     }
-
-    /**
-     * Update existing account details with business rules.
-     */
-
     public ChartOfAccounts update(Long id, ChartOfAccountRequest request) {
         // 1. Find existing account and verify company ownership
         ChartOfAccounts existing = findById(id);
@@ -87,9 +82,7 @@ public class ChartOfAccountsService {
                     "The account code cannot be modified. If the code is wrong, you must create a new one.");
         }
 
-
         // 3. Inverse Cascade Validation
-        // If the user tries to set postingAccount to true, we must ensure it has no children
         if (Boolean.TRUE.equals(request.getPostingAccount()) && !Boolean.TRUE.equals(existing.isPostingAccount())) {
             if (repository.existsByParent(existing)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -97,53 +90,51 @@ public class ChartOfAccountsService {
             }
         }
 
-        // 4. Handle Hierarchy and Level recalculation
-        ChartOfAccounts parent = null;
+        //  4. Handle Hierarchy and Context ---
+        ChartOfAccounts parentToValidate;
+
         if (request.getParentId() != null) {
+            // Case A: User is moving the account to a NEW parent
             if (id.equals(request.getParentId())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An account cannot be its own parent");
             }
 
-            parent = repository.findById(request.getParentId())
+            parentToValidate = repository.findById(request.getParentId())
                     .filter(p -> p.getCompany().getId().equals(existing.getCompany().getId()))
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid parent account"));
 
-            if (Boolean.TRUE.equals(parent.isPostingAccount())) {
+            if (Boolean.TRUE.equals(parentToValidate.isPostingAccount())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Parent cannot be a posting account");
             }
 
-            // 3.1 NEW: Ensure class consistency with parent even on update [cite: 2026-01-14]
-            if (!parent.getAccountClass().equals(request.getAccountClass())) {
+            if (!parentToValidate.getAccountClass().equals(request.getAccountClass())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Account class mismatch. Expected: " + parent.getAccountClass());
+                        "Account class mismatch. Expected: " + parentToValidate.getAccountClass());
             }
 
-            existing.setParent(parent);
-            existing.setLevel((byte) (parent.getLevel() + 1));
+            existing.setParent(parentToValidate);
+            existing.setLevel((byte) (parentToValidate.getLevel() + 1));
         } else {
-            existing.setParent(null);
-            existing.setLevel((byte) 1);
+            // Case B: User did NOT send parentId. Use the existing one from DB
+            parentToValidate = existing.getParent();
+
+            // If it's not a Level 1 root, maintain its current level
+            if (parentToValidate == null) {
+                existing.setLevel((byte) 1);
+            } else {
+                existing.setLevel((byte) (parentToValidate.getLevel() + 1));
+            }
         }
 
-        // 5. Validate code structure for the update
-        validateCodeStructure(parent, request);
+        // 5. Validate code structure (parentToValidate is never null unless it's truly Level 1)
+        validateCodeStructure(parentToValidate, request);
 
         // 6. Map the rest of the fields
         mapDtoToEntity(request, existing);
 
-
-        // 7. TODO: Safety check for accounting flags [cite: 2026-01-17]
-        // If the user is trying to DISABLE a requirement (ThirdParty, CostCenter, etc.)
-      //  if (existing.getRequiresThirdParty() && !request.getRequiresThirdParty()) {
-            // if (movementRepository.existsWithThirdParty(existing)) {
-            //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-            //        "Cannot disable Third Party requirement because movements already exist.");
-            // }
-      //  }
-
         return repository.save(existing);
-
     }
+
     public void delete(Long id) {
         // 1. Find existing account
         ChartOfAccounts account = findById(id);
@@ -181,17 +172,19 @@ public class ChartOfAccountsService {
         String code = request.getCode();
         int codeLength = code.length();
 
-        // Rule: Posting accounts must have at least 6 digits (Level 4) [cite: 2026-01-14]
+        // Rule: Posting accounts must have at least 6 digits (Level 4)
         if (Boolean.TRUE.equals(request.getPostingAccount()) && codeLength < 6) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Posting accounts (auxiliaries) must have at least 6 digits (Level 4)");
         }
 
-        // Root validation (Level 1)
+        // Root validation: If there is no parent, it MUST be Level 1 (1 digit)
         if (parent == null) {
             if (codeLength != 1) {
+                // If the code is longer than 1 but parent is null,
+                // it means the hierarchy is broken or it's a sub-account missing its parent link.
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Root accounts (Level 1) must have a 1-digit code (e.g., '1')");
+                        "Account " + code + " has no parent but is not Level 1 (1-digit code).");
             }
             return;
         }
@@ -206,10 +199,9 @@ public class ChartOfAccountsService {
 
         if (!isValidJump) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Invalid code length for the selected parent. Structure: 1 -> 2 -> 4 -> 6 digits.");
+                    "Invalid code length (" + codeLength + ") for the selected parent (" + parent.getCode() + "). Hierarchy: 1 -> 2 -> 4 -> 6 digits.");
         }
     }
-
     /**
      * Read and Search operations
      */
