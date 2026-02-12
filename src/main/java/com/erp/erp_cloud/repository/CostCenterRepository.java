@@ -23,5 +23,6 @@ public interface CostCenterRepository extends JpaRepository<CostCenter, Long> {
     List<CostCenter> findByParentId(Long parentId);
 
 
+    boolean existsByParentAndActiveTrue(CostCenter costCenter);
     boolean existsByParent(CostCenter parent);
 }

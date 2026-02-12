@@ -9,12 +9,16 @@ import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.entity.Company;
+
+import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -197,6 +201,24 @@ public class JournalEntryService {
 
         response.setItems(itemDtos);
         return response;
+    }
+
+
+    @Transactional(readOnly = true)
+    public Page<JournalEntryResponseDTO> listEntries(
+            String searchTerm,
+            LocalDate startDate,
+            LocalDate endDate,
+            Pageable pageable) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        // 1. Fetch filtered entities from DB
+        Page<JournalEntry> entries = repository.searchEntries(
+                company, searchTerm, startDate, endDate, pageable);
+
+        // 2. Transform the page of Entities into a page of DTOs
+        return entries.map(this::mapToResponseDTO);
     }
 }
 

@@ -1,14 +1,14 @@
 package com.erp.erp_cloud.dto;
 
-
 import lombok.Data;
 
 @Data
-public class CostCenterRequest {
+public class CostCenterResponseDTO {
+    private Long id;
     private String code;
     private String name;
-    private Long parentId;
+    private Integer level;
+    private boolean active;
     private boolean allowsMovement;
-    private boolean active = true;
-
+    private Long parentId;
 }
