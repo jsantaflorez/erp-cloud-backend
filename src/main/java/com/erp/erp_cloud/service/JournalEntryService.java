@@ -2,8 +2,10 @@ package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.JournalEntryRequest;
 import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
+import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.JournalEntry;
 import com.erp.erp_cloud.entity.JournalEntryItem;
+
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
@@ -82,6 +84,14 @@ public class JournalEntryService {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                             "Account not found or access denied: " + itemDto.getAccountId()));
 
+            // --- THE ACTIVE GUARD (ACCOUNT) ---
+            if (!account.isActive()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Account " + account.getCode() + " is inactive and cannot receive new entries.");
+            }
+
+
+
         // 6. Check if it's a posting account
             if (!account.isPostingAccount()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -95,10 +105,12 @@ public class JournalEntryService {
                 }
 
                 var thirdParty = thirdPartyRepository.findById(itemDto.getThirdPartyId())
-                        // SECURITY: Ensure the ThirdParty belongs to the active company
                         .filter(tp -> tp.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                                "Third Party not found or belongs to another company."));
+                                "Third Party not found or access denied."));
+
+                // TODO: Add ThirdParty active check here once implemented
+
                 item.setThirdParty(thirdParty);
 
             }
@@ -114,6 +126,12 @@ public class JournalEntryService {
                         .filter(cc -> cc.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                                 "Cost Center not found or access denied."));
+            // --- THE ACTIVE GUARD (COST CENTER) ---
+                if (!costCenter.isActive()) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "The Cost Center '" + costCenter.getName() + "' is inactive.");
+                }
+
 
             // VALIDATION: Check "allows_movement" flag
                 if (!costCenter.isAllowsMovement()) {
@@ -135,6 +153,7 @@ public class JournalEntryService {
         JournalEntry savedEntry = repository.save(entry);
         return mapToResponseDTO(savedEntry);
     }
+
 
 
 

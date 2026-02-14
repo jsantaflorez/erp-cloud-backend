@@ -12,8 +12,19 @@ import java.io.Serializable;
 
 import java.util.List;
 
+
 @Entity
-@Table(name = "cost_centers")
+@Table(
+        name = "cost_centers",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_company_cost_center_code",
+                        columnNames = {"company_id", "code"}
+                )
+        }
+)
+
+
 @Data
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class CostCenter implements Serializable {

@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.ThirdPartyRequest;
+import com.erp.erp_cloud.dto.ThirdPartyResponseDTO;
 import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.CostCenter;
@@ -17,9 +18,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-
-import java.util.List;
-
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -34,106 +32,100 @@ public class ThirdPartyService {
     // CREATE
     // =====================================================
 
-    public ThirdParty create(ThirdPartyRequest request) {
-        // 1. Get the current active company from security context
+    public ThirdPartyResponseDTO create(ThirdPartyRequest request) {
         Company company = companyContext.getCurrentCompany();
 
-        // 2. Check if the document number already exists for this company
-        boolean exists = thirdPartyRepository
-                .existsByCompanyAndDocumentNumber(company, request.getDocumentNumber());
-
-        if (exists) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "Third party already exists for this company");
+        if (thirdPartyRepository.existsByCompanyAndDocumentNumber(company, request.getDocumentNumber())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Third party already exists.");
         }
 
         ThirdParty thirdParty = new ThirdParty();
-
-        // 3. SET MANDATORY CONTEXT FIRST
-        // Mapping depends on the company being already set in the entity
         thirdParty.setCompany(company);
         thirdParty.setActive(true);
 
-        // 4. NOW map request data to the entity
-        // The validator inside will now find the company ID correctly
         mapRequestToEntity(request, thirdParty);
-
-        return thirdPartyRepository.save(thirdParty);
+        return mapToResponseDTO(thirdPartyRepository.save(thirdParty));
     }
+
     // =====================================================
     // READ
     // =====================================================
 
 
     @Transactional(readOnly = true)
-    public Page<ThirdParty> listAll(String searchTerm, Pageable pageable) {
-        // Get the current active company from security context
+    public Page<ThirdPartyResponseDTO> listAll(String searchTerm, Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
+        Page<ThirdParty> entities = (searchTerm != null && !searchTerm.trim().isEmpty())
+                ? thirdPartyRepository.findBySearchTerm(company, searchTerm, pageable)
+                : thirdPartyRepository.findByCompany(company, pageable);
 
-        // If search term is present, use the search repository method
-        if (searchTerm != null && !searchTerm.trim().isEmpty()) {
-            return thirdPartyRepository.findBySearchTerm(company, searchTerm, pageable);
-        }
-
-        // If no search term, return all third parties for the company with pagination
-        return thirdPartyRepository.findByCompany(company, pageable);
+        return entities.map(this::mapToResponseDTO);
     }
 
     @Transactional(readOnly = true)
-    public ThirdParty findById(Long id) {
+    public ThirdPartyResponseDTO findById(Long id) {
+        return mapToResponseDTO(findEntityById(id));
+    }
+
+    // Helper to get the actual entity for internal use
+    private ThirdParty findEntityById(Long id) {
         Company company = companyContext.getCurrentCompany();
-
-
-        // Find by ID and ensure it belongs to the active company
         return thirdPartyRepository.findById(id)
                 .filter(tp -> tp.getCompany().getId().equals(company.getId()))
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "Third party with ID " + id + " not found for this company"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Third party not found"));
     }
 
+    /**
+     * Retrieves a third party by document number and maps it to a DTO.
+     * This is useful for the frontend to quickly find a customer/vendor by their ID.
+     */
     @Transactional(readOnly = true)
-    public ThirdParty getByDocumentNumber(String documentNumber) {
+    public ThirdPartyResponseDTO getByDocumentNumber(String documentNumber) {
         Company company = companyContext.getCurrentCompany();
 
-        return thirdPartyRepository
+        // We find the entity first, ensuring it belongs to the current company
+        ThirdParty entity = thirdPartyRepository
                 .findByCompanyAndDocumentNumber(company, documentNumber)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "Third party with document " + documentNumber + " not found"));
+
+        // We map it to the ResponseDTO before returning to the controller
+        return mapToResponseDTO(entity);
     }
 
     // =====================================================
     // UPDATE
     // =====================================================
-    public ThirdParty update(Long id, ThirdPartyRequest request) {
-        // Validate existence and company ownership
-        ThirdParty existing = findById(id);
-
-        // Map updated data
+    public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
+        ThirdParty existing = findEntityById(id);
         mapRequestToEntity(request, existing);
-
-        return thirdPartyRepository.save(existing);
+        return mapToResponseDTO(thirdPartyRepository.save(existing));
     }
 
-    // =====================================================
-    // HELPER METHODS (Private)
-    // =====================================================
     /**
-     * Maps data from a ThirdPartyRequest DTO to a ThirdParty Entity.
-     * This avoids code duplication between create and update methods.
+     * Soft Delete: Instead of removing from DB, we deactivate the record.
      */
-    /**
-     * Maps ThirdPartyRequest DTO to ThirdParty Entity with referential integrity checks.
-     * This ensures that City and CostCenter exist in the database before assignment.
-     */
+    public void deactivate(Long id) {
+        ThirdParty tp = findEntityById(id);
+        // Note: In the future, we will check for movements here
+        tp.setActive(false);
+        thirdPartyRepository.save(tp);
+    }
+
+    public void activate(Long id) {
+        ThirdParty tp = findEntityById(id);
+        tp.setActive(true);
+        thirdPartyRepository.save(tp);
+    }
+
     private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity) {
         entity.setDocumentNumber(request.getDocumentNumber());
         entity.setDocumentType(request.getDocumentType());
-        // If it's a NIT or professional document, we ensure the DV is correct
+
         if (request.getDocumentNumber() != null && request.getDocumentNumber().matches("\\d+")) {
             entity.setVerificationDigit(calculateDV(request.getDocumentNumber()));
-        } else {
-            entity.setVerificationDigit(request.getVerificationDigit());
         }
+
         entity.setPersonType(request.getPersonType());
         entity.setTaxRegime(request.getTaxRegime());
         entity.setFirstName(request.getFirstName());
@@ -146,65 +138,47 @@ public class ThirdPartyService {
         entity.setMobile(request.getMobile());
         entity.setAddress(request.getAddress());
 
-        // 1. Validating City existence using cityRepository
         City city = cityRepository.findById(request.getCityId())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND, "City with ID " + request.getCityId() + " not found."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "City not found."));
         entity.setCity(city);
 
-        // 2. Validate Default Cost Center (The 3 Golden Rules)
         if (request.getDefaultCostCenterId() != null) {
             CostCenter cc = costCenterRepository.findById(request.getDefaultCostCenterId())
-                    // Rule 1 & 2: Existence and Company Ownership
                     .filter(c -> c.getCompany().getId().equals(entity.getCompany().getId()))
-                    // Rule 3: Must allow movement (Accounting integrity)
                     .filter(CostCenter::isAllowsMovement)
-                    .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.BAD_REQUEST,
-                            "Invalid Cost Center: Must exist, belong to your company, and allow movement."));
-
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Cost Center."));
             entity.setDefaultCostCenter(cc);
-        } else {
-            entity.setDefaultCostCenter(null);
+        }
+    }
+
+    private ThirdPartyResponseDTO mapToResponseDTO(ThirdParty entity) {
+        ThirdPartyResponseDTO dto = new ThirdPartyResponseDTO();
+        dto.setId(entity.getId());
+        dto.setDocumentNumber(entity.getDocumentNumber());
+        dto.setDocumentType(entity.getDocumentType());
+        dto.setVerificationDigit(entity.getVerificationDigit());
+        dto.setPersonType(entity.getPersonType());
+        dto.setTaxRegime(entity.getTaxRegime());
+
+        // Using your entity helper methods
+        dto.setLegalDisplayName(entity.getLegalDisplayName());
+        dto.setFullIdentity(entity.getFullIdentity());
+
+        dto.setEmail(entity.getEmail());
+        dto.setMobile(entity.getMobile());
+        dto.setAddress(entity.getAddress());
+        dto.setActive(entity.getActive());
+
+        dto.setCityId(entity.getCity().getId());
+        dto.setCityName(entity.getCity().getName());
+
+        if (entity.getDefaultCostCenter() != null) {
+            dto.setDefaultCostCenterId(entity.getDefaultCostCenter().getId());
+            dto.setDefaultCostCenterName(entity.getDefaultCostCenter().getName());
         }
 
-
-
+        return dto;
     }
-    @Transactional
-    public void delete(Long id) {
-        // 1. Find the third party using the service's internal findById (validates company ownership)
-        ThirdParty entity = this.findById(id);
-
-        // 2. TODO: Check for accounting movements in the ledger [cite: 2026-01-17]
-        // if (movementRepository.existsByThirdParty(entity)) {
-        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-        //        "Cannot delete Third Party because it has linked accounting movements.");
-        // }
-
-        // 3. TODO: Check for initial balances in the Third Party Balance table [cite: 2026-01-17]
-        // if (thirdPartyBalanceRepository.hasInitialBalance(entity)) {
-        //    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-        //        "Cannot delete Third Party because it has an opening balance.");
-        // }
-
-        // 4. Perform the deletion
-        thirdPartyRepository.delete(entity);
-    }
-
-    // =====================================================
-    // STATUS MANAGEMENT
-    // =====================================================
-    public void deactivate(Long id) {
-        ThirdParty tp = findById(id);
-        tp.setActive(false);
-    }
-
-    public void activate(Long id) {
-        ThirdParty tp = findById(id);
-        tp.setActive(true);
-    }
-
     /**
      * Calculates the Verification Digit (DV) for Colombian NIT using Modulo 11 algorithm.
      * @param nit The document number string.

@@ -8,7 +8,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "journal_entries")
+@Table(
+        name = "journal_entries",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_company_doctype_consecutive",
+                        columnNames = {"company_id", "document_type_id", "consecutive"}
+                )
+        }
+)
 @Getter
 @Setter
 public class JournalEntry {
