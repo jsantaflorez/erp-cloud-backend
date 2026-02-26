@@ -1,7 +1,6 @@
 package com.erp.erp_cloud.controller;
 
-import com.erp.erp_cloud.dto.JournalEntryRequest;
-import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
+import com.erp.erp_cloud.dto.*;
 
 import com.erp.erp_cloud.service.JournalEntryService;
 import jakarta.validation.Valid;
@@ -30,19 +29,29 @@ public class JournalEntryController {
      */
     @PostMapping
 
-    public ResponseEntity<JournalEntryResponseDTO> create(@Valid @RequestBody JournalEntryRequest request) {
-        JournalEntryResponseDTO response = service.create(request);
-        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> create(@Valid @RequestBody JournalEntryRequest request) {
+        JournalEntryResponseDTO created = service.create(request);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(new ApiResponse<>("Journal Entry created successfully", true, created));
     }
 
 
+
+
+
     @GetMapping
-    public ResponseEntity<Page<JournalEntryResponseDTO>> getAll(
+    public ResponseEntity<ApiResponse<Page<JournalEntryResponseDTO>>> getAll(
             @RequestParam(required = false) String searchTerm,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             Pageable pageable) {
 
-        return ResponseEntity.ok(service.listEntries(searchTerm, startDate, endDate, pageable));
+        Page<JournalEntryResponseDTO> data = service.listEntries(searchTerm, startDate, endDate, pageable);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>("Journal entries retrieved successfully", true, data)
+        );
     }
+
 }

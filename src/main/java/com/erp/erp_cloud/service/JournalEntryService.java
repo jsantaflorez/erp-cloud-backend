@@ -13,6 +13,7 @@ import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import com.erp.erp_cloud.entity.Company;
 
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -27,6 +28,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true) // Best practice: Read-only by default
 public class JournalEntryService {
 
     private final JournalEntryRepository repository;
@@ -35,26 +37,22 @@ public class JournalEntryService {
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
     private final CompanyContext companyContext;
-    // We will need these for cross-validation later:
-    // private final ChartOfAccountsService accountService;
-    // private final ThirdPartyService thirdPartyService;
+    /**
+     * Creates a new accounting voucher with full validation.
+     */
 
     @Transactional
-
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
-
-        // 1. Validate Items List Exists
-
+        Company currentCompany = companyContext.getCurrentCompany();
+        // 1. Shallow Validation (Items list and amounts)
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Journal entry must contain at least one item.");
         }
 
-        // 2. Validate Double-Entry Accounting (Balance)
+        // 2. Double-Entry Balance Validation
         validateAccountingBalance(request.getItems());
 
-        // 3. Load DocumentType and assign consecutive (Separation of responsibilities)>
-
-
+        // 3. Document Type & Consecutive Handling
         var docType = docTypeService.findById(request.getDocumentTypeId());
         if (!docType.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This Document Type does not belong to the tenant company.");
@@ -64,12 +62,12 @@ public class JournalEntryService {
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
         entry.setCompany(companyContext.getCurrentCompany());
-// Assign the number using the service method
+
+        // Assign consecutive logic
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
         entry.setConsecutive(nextNumber);
-// Build the unique string: Prefix + Number (e.g., "FV-1")
-        String formattedNumber = docType.getPrefix() + "-" + nextNumber;
-        entry.setDocumentNumber(formattedNumber);
+        // Build the unique string: Prefix + Number (e.g., "FV-1")
+        entry.setDocumentNumber(docType.getPrefix() + "-" + nextNumber);
 
 
         // 4. Map and Validate Items
@@ -78,76 +76,70 @@ public class JournalEntryService {
             validateItemAmounts(itemDto.getDebit(), itemDto.getCredit());
 
             JournalEntryItem item = new JournalEntryItem();
-       // 5. Fetch the Account
+        // 5. Account Validation
             var account = accountRepository.findById(itemDto.getAccountId())
                     .filter(a -> a.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) // SECURITY
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                             "Account not found or access denied: " + itemDto.getAccountId()));
 
-            // --- THE ACTIVE GUARD (ACCOUNT) ---
             if (!account.isActive()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Account " + account.getCode() + " is inactive and cannot receive new entries.");
             }
 
 
-
-        // 6. Check if it's a posting account
             if (!account.isPostingAccount()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Account " + account.getCode() + " is not a posting account.");
             }
-        // 7. Validate Third Party Requirement
+            // 6. Third Party Validation
             if (account.isRequiresThirdParty()) {
-                if (itemDto.getThirdPartyId() == null) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Account " + account.getCode() + " requires a Third Party.");
-                }
-
+                    if (itemDto.getThirdPartyId() == null) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account " + account.getCode() + " requires a Third Party.");
+                    }
                 var thirdParty = thirdPartyRepository.findById(itemDto.getThirdPartyId())
-                        .filter(tp -> tp.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                                "Third Party not found or access denied."));
+                        .filter(tp -> tp.getCompany().getId().equals(currentCompany.getId()))
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Third Party not found."));
 
-                // TODO: Add ThirdParty active check here once implemented
 
+                if (thirdParty.getActive() != null && !thirdParty.getActive()) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Third Party " + thirdParty.getLegalDisplayName() + " is inactive.");
+                }
                 item.setThirdParty(thirdParty);
 
+
+
             }
 
-        // 8. Validate Cost Center Requirement
+            // 7. Cost Center Validation
             if (account.isRequiresCostCenter()) {
                 if (itemDto.getCostCenterId() == null) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Account " + account.getCode() + " requires a Cost Center.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account " + account.getCode() + " requires a Cost Center.");
                 }
+
                 var costCenter = costCenterRepository.findById(itemDto.getCostCenterId())
-                        // SECURITY: Ensure the Cost Center belongs to the active company
-                        .filter(cc -> cc.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                                "Cost Center not found or access denied."));
-            // --- THE ACTIVE GUARD (COST CENTER) ---
+                        .filter(cc -> cc.getCompany().getId().equals(currentCompany.getId()))
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cost Center not found."));
+
                 if (!costCenter.isActive()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "The Cost Center '" + costCenter.getName() + "' is inactive.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cost Center '" + costCenter.getName() + "' is inactive.");
                 }
 
-
-            // VALIDATION: Check "allows_movement" flag
                 if (!costCenter.isAllowsMovement()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "The Cost Center '" + costCenter.getName() + "' is a parent category and does not allow movements.");
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cost Center '" + costCenter.getName() + "' does not allow movements.");
                 }
-
                 item.setCostCenter(costCenter);
             }
+
             item.setAccount(account);
-            item.setDebit(Optional.ofNullable(itemDto.getDebit()).orElse(BigDecimal.ZERO));
-            item.setCredit(Optional.ofNullable(itemDto.getCredit()).orElse(BigDecimal.ZERO));
+            item.setDebit(Optional.ofNullable(itemDto.getDebit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            item.setCredit(Optional.ofNullable(itemDto.getCredit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
             item.setDescription(itemDto.getDescription());
 
             entry.addItem(item);
         }
+
 
 
         JournalEntry savedEntry = repository.save(entry);
@@ -155,26 +147,24 @@ public class JournalEntryService {
     }
 
 
-
-
     private void validateAccountingBalance(List<JournalEntryRequest.ItemRequest> items) {
         BigDecimal totalDebit = items.stream()
                 .map(i -> Optional.ofNullable(i.getDebit()).orElse(BigDecimal.ZERO))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
 
         BigDecimal totalCredit = items.stream()
                 .map(i -> Optional.ofNullable(i.getCredit()).orElse(BigDecimal.ZERO))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
 
         if (totalDebit.compareTo(totalCredit) != 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "The transaction is unbalanced. Total Debit: " + totalDebit + ", Total Credit: " + totalCredit);
+                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s", totalDebit, totalCredit));
         }
     }
 
     private void validateItemAmounts(BigDecimal debit, BigDecimal credit) {
-       // this will avoid a NullPointerException if the client sends null:
-
         BigDecimal safeDebit = Optional.ofNullable(debit).orElse(BigDecimal.ZERO);
         BigDecimal safeCredit = Optional.ofNullable(credit).orElse(BigDecimal.ZERO);
 
@@ -185,9 +175,11 @@ public class JournalEntryService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item cannot have both a debit and a credit.");
         }
         if (!hasDebit && !hasCredit) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item must have either a debit or a credit greater than zero.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item must have a value greater than zero.");
         }
     }
+
+
     private JournalEntryResponseDTO mapToResponseDTO(JournalEntry entry) {
         JournalEntryResponseDTO response = new JournalEntryResponseDTO();
         response.setId(entry.getId());
@@ -203,10 +195,7 @@ public class JournalEntryService {
             itemDto.setDebit(item.getDebit());
             itemDto.setCredit(item.getCredit());
 
-
-
             if (item.getThirdParty() != null) {
-                // Using legal name logic + document number
                 itemDto.setThirdPartyIdNumber(item.getThirdParty().getDocumentNumber());
                 itemDto.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
             }
@@ -223,21 +212,11 @@ public class JournalEntryService {
     }
 
 
-    @Transactional(readOnly = true)
-    public Page<JournalEntryResponseDTO> listEntries(
-            String searchTerm,
-            LocalDate startDate,
-            LocalDate endDate,
-            Pageable pageable) {
-
-        Company company = companyContext.getCurrentCompany();
-
-        // 1. Fetch filtered entities from DB
-        Page<JournalEntry> entries = repository.searchEntries(
-                company, searchTerm, startDate, endDate, pageable);
-
-        // 2. Transform the page of Entities into a page of DTOs
-        return entries.map(this::mapToResponseDTO);
+     public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+        return repository.searchEntries(companyContext.getCurrentCompany(), searchTerm, startDate, endDate, pageable)
+                .map(this::mapToResponseDTO);
     }
+
+
 }
 

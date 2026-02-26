@@ -56,14 +56,22 @@ public class DocumentTypeService {
 
     /**
      * Increments the consecutive and returns the next number.
-     * Note: In a high-traffic production environment, we would add
-     * a Pessimistic Lock here to prevent duplicate numbers.
+     * Note: In a high-traffic production environment, we add
+     * a Pessimistic Lock to prevent duplicate numbers.
      */
+
     @Transactional
     public Long getNextConsecutive(Long id) {
-        DocumentType dt = findById(id);
+        // 1. Fetch with a Lock - Thread B will wait here until Thread A finishes
+        DocumentType dt = repository.findByIdWithLock(id)
+                .filter(d -> d.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document Type not found"));
+
+        // 2. Increment
         Long next = dt.getCurrentConsecutive() + 1;
         dt.setCurrentConsecutive(next);
+
+        // 3. Save and release lock (at end of Transaction)
         repository.save(dt);
         return next;
     }

@@ -8,6 +8,7 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -29,6 +30,6 @@ public interface DocumentTypeRepository extends JpaRepository<DocumentType, Long
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT dt FROM DocumentType dt WHERE dt.id = :id")
-    Optional<DocumentType> findByIdWithLock(Long id);
+    Optional<DocumentType> findByIdWithLock(@Param("id") Long id);
 
 }
