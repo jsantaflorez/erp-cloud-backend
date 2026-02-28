@@ -1,6 +1,8 @@
 package com.erp.erp_cloud.controller;
 
+import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.TaxRequest;
+import com.erp.erp_cloud.dto.TaxResponseDTO;
 import com.erp.erp_cloud.entity.Tax;
 import com.erp.erp_cloud.service.TaxService;
 import jakarta.validation.Valid;
@@ -10,33 +12,37 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-
 @RestController
-@RequestMapping("/api/taxes")
+@RequestMapping("/api/v1/taxes")
 @RequiredArgsConstructor
 public class TaxController {
 
     private final TaxService service;
 
     @PostMapping
-    public ResponseEntity<Tax> create(@Valid @RequestBody TaxRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
+    public ResponseEntity<ApiResponse<TaxResponseDTO>> create(@Valid @RequestBody TaxRequest request) {
+        TaxResponseDTO data = service.create(request);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new ApiResponse<>("Tax rule created successfully", true, data));
     }
 
     @GetMapping
-    public ResponseEntity<List<Tax>> listAll() {
-        return ResponseEntity.ok(service.listAll());
+    public ResponseEntity<ApiResponse<List<TaxResponseDTO>>> listAll() {
+        List<TaxResponseDTO> data = service.listAll();
+        return ResponseEntity.ok(new ApiResponse<>("Taxes retrieved successfully", true, data));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Tax> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(service.findById(id));
+    public ResponseEntity<ApiResponse<TaxResponseDTO>> getById(@PathVariable Long id) {
+        TaxResponseDTO data = service.mapToResponseDTO(service.findEntityById(id));
+        return ResponseEntity.ok(new ApiResponse<>("Tax found", true, data));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Tax> update(
+    public ResponseEntity<ApiResponse<TaxResponseDTO>> update(
             @PathVariable Long id,
             @Valid @RequestBody TaxRequest request) {
-        return ResponseEntity.ok(service.update(id, request));
+        TaxResponseDTO data = service.update(id, request);
+        return ResponseEntity.ok(new ApiResponse<>("Tax updated successfully", true, data));
     }
 }

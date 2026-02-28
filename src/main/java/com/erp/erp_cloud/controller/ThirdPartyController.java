@@ -62,7 +62,7 @@ public class ThirdPartyController {
      * Deactivate a Third Party (Logical delete).
      */
 
-    @DeleteMapping("/{id}/deactivate")
+    @PatchMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         thirdPartyService.deactivate(id);
         return ResponseEntity.ok(new ApiResponse<>("Third Party deactivated successfully", true));

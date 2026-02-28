@@ -67,7 +67,15 @@ public class JournalEntryService {
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
         entry.setConsecutive(nextNumber);
         // Build the unique string: Prefix + Number (e.g., "FV-1")
-        entry.setDocumentNumber(docType.getPrefix() + "-" + nextNumber);
+        String formattedNumber;
+        if (docType.getPrefix() != null && !docType.getPrefix().isBlank()) {
+            formattedNumber = docType.getPrefix() + "-" + nextNumber;
+        } else {
+            formattedNumber = nextNumber.toString(); // Just "1", "2", etc.
+        }
+        entry.setDocumentNumber(formattedNumber);
+
+
 
 
         // 4. Map and Validate Items

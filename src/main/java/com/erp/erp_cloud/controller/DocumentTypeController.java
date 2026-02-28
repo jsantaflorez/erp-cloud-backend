@@ -1,7 +1,8 @@
 package com.erp.erp_cloud.controller;
 
+import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.DocumentTypeRequest;
-import com.erp.erp_cloud.entity.DocumentType;
+import com.erp.erp_cloud.dto.DocumentTypeResponseDTO;
 import com.erp.erp_cloud.service.DocumentTypeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -12,49 +13,67 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/document-types")
+@RequestMapping("/api/v1/document-types")
 @RequiredArgsConstructor
 public class DocumentTypeController {
 
-    private final DocumentTypeService service;
+    private final DocumentTypeService documentTypeservice;
+
 
     @PostMapping
-    public ResponseEntity<DocumentType> create(@Valid @RequestBody DocumentTypeRequest request) {
-        // Convert Request DTO to Entity (can be moved to Service later if preferred)
-        DocumentType entity = new DocumentType();
-        entity.setCode(request.getCode());
-        entity.setName(request.getName());
-        entity.setPrefix(request.getPrefix());
-        entity.setAccounting(request.getIsAccounting());
-        entity.setLegalResolution(request.getLegalResolution());
-
-        if (request.getCurrentConsecutive() != null) {
-            entity.setCurrentConsecutive(request.getCurrentConsecutive());
-        }
-
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.create(entity));
+    public ResponseEntity<ApiResponse<DocumentTypeResponseDTO>> create(@Valid @RequestBody DocumentTypeRequest request) {
+        DocumentTypeResponseDTO data = documentTypeservice.create(request);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(new ApiResponse<>("Document type created successfully", true, data));
     }
+
+
+
 
     @GetMapping
-    public ResponseEntity<List<DocumentType>> listAll() {
-        return ResponseEntity.ok(service.listAll());
+    public ResponseEntity<ApiResponse<List<DocumentTypeResponseDTO>>> listAll() {
+        List<DocumentTypeResponseDTO> data = documentTypeservice.listAll();
+        return ResponseEntity.ok(new ApiResponse<>("Document types retrieved", true, data));
     }
 
+
     @GetMapping("/{id}")
-    public ResponseEntity<DocumentType> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(service.findById(id));
+    public ResponseEntity<ApiResponse<DocumentTypeResponseDTO>> getById(@PathVariable Long id) {
+        DocumentTypeResponseDTO data = documentTypeservice.findByIdDto(id);
+        return ResponseEntity.ok(new ApiResponse<>("Document type found", true, data));
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<DocumentType>> search(@RequestParam String name) {
-        return ResponseEntity.ok(service.searchByName(name));
+    public ResponseEntity<ApiResponse<List<DocumentTypeResponseDTO>>> search(@RequestParam String name) {
+        List<DocumentTypeResponseDTO> data = documentTypeservice.searchByName(name);
+        return ResponseEntity.ok(new ApiResponse<>("Search results retrieved", true, data));
+    }
+
+    /**
+     * Soft-deactivates a document type so it can no longer be used for new entries.
+     */
+    @PatchMapping("/{id}/deactivate")
+    public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
+        documentTypeservice.deactivate(id);
+        return ResponseEntity.ok(new ApiResponse<>("Document type deactivated successfully", true));
+    }
+
+    @PatchMapping("/{id}/activate")
+    public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
+        documentTypeservice.activate(id);
+        return ResponseEntity.ok(new ApiResponse<>("Document type activated successfully", true));
     }
 
     @PatchMapping("/{id}/reset-consecutive")
-    public ResponseEntity<Void> resetConsecutive(
+    public ResponseEntity<ApiResponse<Void>> resetConsecutive(
             @PathVariable Long id,
             @RequestParam Long newValue) {
-        service.resetConsecutive(id, newValue);
-        return ResponseEntity.noContent().build();
+        documentTypeservice.resetConsecutive(id, newValue);
+        return ResponseEntity.ok(new ApiResponse<>("Consecutive reset successfully to " + newValue, true));
     }
+
+
+
+
 }
