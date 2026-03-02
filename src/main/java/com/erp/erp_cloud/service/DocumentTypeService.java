@@ -4,13 +4,16 @@ import com.erp.erp_cloud.dto.DocumentTypeRequest;
 import com.erp.erp_cloud.dto.DocumentTypeResponseDTO;
 import com.erp.erp_cloud.entity.DocumentType;
 import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.exception.DuplicateResourceException;
+import com.erp.erp_cloud.exception.InvalidOperationException;
+import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.DocumentTypeRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -19,30 +22,32 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DocumentTypeService {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentTypeService.class);
+
     private final DocumentTypeRepository repository;
     private final CompanyContext companyContext;
 
-
-
-
     @Transactional(readOnly = true)
     public List<DocumentTypeResponseDTO> listAll() {
-        return repository.findByCompanyIdAndActiveTrue(companyContext.getCurrentCompany().getId())
+        Company company = companyContext.getCurrentCompany();
+        log.debug("Listing all active document types for company: {}", company.getId());
+
+        return repository.findByCompanyIdAndActiveTrue(company.getId())
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
     }
-
 
     /**
      * Internal helper for other services that need the actual Entity.
      */
     @Transactional(readOnly = true)
     public DocumentType findById(Long id) {
+        log.debug("Finding document type by id: {}", id);
+
         return repository.findById(id)
                 .filter(dt -> dt.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Document Type with ID " + id + " not found for your company"));
+                .orElseThrow(() -> new ResourceNotFoundException("DocumentType", id));
     }
 
     /**
@@ -53,19 +58,21 @@ public class DocumentTypeService {
         return mapToResponseDTO(findById(id));
     }
 
-
     @Transactional
     public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
         Company company = companyContext.getCurrentCompany();
 
+        log.debug("Creating document type with code: {} for company: {}", request.getCode(), company.getId());
+
+        // Validar duplicados
         if (repository.existsByCompanyAndCode(company, request.getCode())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Document code '" + request.getCode() + "' already exists.");
+            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
         }
 
         DocumentType entity = new DocumentType();
         entity.setCompany(company);
         entity.setActive(true);
+
         // Map fields from Request DTO
         updateEntityFromRequest(entity, request);
 
@@ -73,69 +80,88 @@ public class DocumentTypeService {
             entity.setCurrentConsecutive(0L);
         }
 
-        return mapToResponseDTO(repository.save(entity));
+        DocumentType saved = repository.save(entity);
+        log.info("Document type created successfully with id: {}", saved.getId());
+
+        return mapToResponseDTO(saved);
     }
-
-
 
     /**
      * Increments the consecutive and returns the next number.
-     * Note: In a high-traffic production environment, we add
+     * Note: In a high-traffic production environment, we use
      * a Pessimistic Lock to prevent duplicate numbers.
      */
-
-
-
     @Transactional
     public Long getNextConsecutive(Long id) {
+        log.debug("Getting next consecutive for document type id: {}", id);
+
         // 1. Fetch with a Lock - Thread B will wait here until Thread A finishes
         DocumentType dt = repository.findByIdWithLock(id)
                 .filter(d -> d.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document Type not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("DocumentType", id));
+
         // 2. Increment
         Long next = dt.getCurrentConsecutive() + 1;
         dt.setCurrentConsecutive(next);
+
         // 3. Save and release lock (at end of Transaction)
         repository.save(dt);
+
+        log.info("Next consecutive for document type {}: {}", id, next);
         return next;
     }
 
-
     @Transactional
     public void deactivate(Long id) {
+        log.debug("Deactivating document type id: {}", id);
+
         DocumentType entity = findById(id);
         entity.setActive(false);
         repository.save(entity);
+
+        log.info("Document type {} deactivated successfully", id);
     }
 
     @Transactional
     public void activate(Long id) {
+        log.debug("Activating document type id: {}", id);
+
         DocumentType entity = findById(id);
         entity.setActive(true);
         repository.save(entity);
-    }
 
+        log.info("Document type {} activated successfully", id);
+    }
 
     @Transactional
     public void resetConsecutive(Long id, Long newConsecutive) {
+        log.debug("Resetting consecutive for document type id: {} to: {}", id, newConsecutive);
+
         DocumentType existing = findById(id);
+
         if (newConsecutive < existing.getCurrentConsecutive()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot assign a lower consecutive.");
+            throw new InvalidOperationException(
+                    String.format("Cannot assign a lower consecutive. Current: %d, Requested: %d",
+                            existing.getCurrentConsecutive(), newConsecutive)
+            );
         }
+
         existing.setCurrentConsecutive(newConsecutive);
         repository.save(existing);
-    }
 
+        log.info("Consecutive reset successfully for document type {}", id);
+    }
 
     // =====================================================
     // SEARCH
     // =====================================================
 
-
-
     @Transactional(readOnly = true)
     public List<DocumentTypeResponseDTO> searchByName(String name) {
         Company company = companyContext.getCurrentCompany();
+
+        log.debug("Searching document types by name: {} for company: {}", name, company.getId());
+
         return repository.findByCompanyAndNameContainingIgnoreCase(company, name)
                 .stream()
                 .map(this::mapToResponseDTO)
@@ -145,19 +171,28 @@ public class DocumentTypeService {
     // =====================================================
     // UPDATE
     // =====================================================
+
     @Transactional
     public DocumentTypeResponseDTO update(Long id, DocumentTypeRequest request) {
+        log.debug("Updating document type id: {}", id);
+
         DocumentType existing = findById(id);
 
+        // Si cambió el código, validar que no exista
         if (!existing.getCode().equals(request.getCode())) {
             if (repository.existsByCompanyAndCode(companyContext.getCurrentCompany(), request.getCode())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Code already in use.");
+                throw new DuplicateResourceException("DocumentType", "code", request.getCode());
             }
         }
 
         updateEntityFromRequest(existing, request);
-        return mapToResponseDTO(repository.save(existing));
+        DocumentType updated = repository.save(existing);
+
+        log.info("Document type {} updated successfully", id);
+
+        return mapToResponseDTO(updated);
     }
+
     // --- MAPPING HELPERS ---
 
     private void updateEntityFromRequest(DocumentType entity, DocumentTypeRequest request) {
@@ -192,8 +227,3 @@ public class DocumentTypeService {
         return dto;
     }
 }
-
-
-
-
-

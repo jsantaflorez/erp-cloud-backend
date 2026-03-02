@@ -4,18 +4,23 @@ import com.erp.erp_cloud.dto.CostCenterRequest;
 import com.erp.erp_cloud.dto.CostCenterResponseDTO;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.exception.InvalidOperationException;
+import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class CostCenterService {
+
+    private static final Logger log = LoggerFactory.getLogger(CostCenterService.class);
 
     private final CostCenterRepository repository;
     private final CompanyContext companyContext;
@@ -27,6 +32,9 @@ public class CostCenterService {
     @Transactional(readOnly = true)
     public List<CostCenterResponseDTO> listAll() {
         Company company = companyContext.getCurrentCompany();
+
+        log.debug("Listing all cost centers for company: {}", company.getId());
+
         return repository.findByCompanyOrderByCodeAsc(company)
                 .stream()
                 .map(this::mapToResponseDTO)
@@ -38,12 +46,20 @@ public class CostCenterService {
      */
     @Transactional
     public CostCenterResponseDTO create(CostCenterRequest request) {
+        Company company = companyContext.getCurrentCompany();
+
+        log.debug("Creating cost center with code: {} for company: {}", request.getCode(), company.getId());
+
         validateActiveStatus(request);
 
         CostCenter costCenter = new CostCenter();
-        costCenter.setCompany(companyContext.getCurrentCompany());
+        costCenter.setCompany(company);
 
-        return mapAndSave(request, costCenter);
+        CostCenterResponseDTO response = mapAndSave(request, costCenter);
+
+        log.info("Cost center created successfully with id: {}", response.getId());
+
+        return response;
     }
 
     /**
@@ -51,12 +67,18 @@ public class CostCenterService {
      */
     @Transactional
     public CostCenterResponseDTO update(Long id, CostCenterRequest request) {
+        log.debug("Updating cost center id: {}", id);
+
         CostCenter costCenter = findEntityById(id);
 
         // Prevent setting allowsMovement to true if the center is inactive
         validateActiveStatus(request);
 
-        return mapAndSave(request, costCenter);
+        CostCenterResponseDTO response = mapAndSave(request, costCenter);
+
+        log.info("Cost center {} updated successfully", id);
+
+        return response;
     }
 
     /**
@@ -65,13 +87,16 @@ public class CostCenterService {
      */
     @Transactional
     public void deactivate(Long id) {
+        log.debug("Deactivating cost center id: {}", id);
+
         CostCenter costCenter = findEntityById(id);
 
         // Hierarchy rule: Do not deactivate if active children exist
         boolean hasActiveChildren = repository.existsByParentAndActiveTrue(costCenter);
         if (hasActiveChildren) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Cannot deactivate: This Cost Center has active sub-centers.");
+            throw new InvalidOperationException(
+                    "Cannot deactivate: This Cost Center has active sub-centers."
+            );
         }
 
         // Logic consistency: Inactive centers cannot receive new transactions
@@ -79,15 +104,20 @@ public class CostCenterService {
         costCenter.setAllowsMovement(false);
 
         repository.save(costCenter);
+
+        log.info("Cost center {} deactivated successfully", id);
     }
 
     @Transactional
     public void activate(Long id) {
+        log.debug("Activating cost center id: {}", id);
+
         CostCenter costCenter = findEntityById(id);
         costCenter.setActive(true);
         repository.save(costCenter);
-    }
 
+        log.info("Cost center {} activated successfully", id);
+    }
 
     /**
      * Gets root-level cost centers.
@@ -95,7 +125,11 @@ public class CostCenterService {
      */
     @Transactional(readOnly = true)
     public List<CostCenterResponseDTO> getRoots() {
-        return repository.findByCompanyAndParentIsNull(companyContext.getCurrentCompany())
+        Company company = companyContext.getCurrentCompany();
+
+        log.debug("Listing root cost centers for company: {}", company.getId());
+
+        return repository.findByCompanyAndParentIsNull(company)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .toList();
@@ -107,7 +141,11 @@ public class CostCenterService {
      */
     @Transactional(readOnly = true)
     public List<CostCenterResponseDTO> getMovementAccounts() {
-        return repository.findByCompanyAndAllowsMovementTrue(companyContext.getCurrentCompany())
+        Company company = companyContext.getCurrentCompany();
+
+        log.debug("Listing cost centers that allow movements for company: {}", company.getId());
+
+        return repository.findByCompanyAndAllowsMovementTrue(company)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .toList();
@@ -119,6 +157,8 @@ public class CostCenterService {
      */
     @Transactional(readOnly = true)
     public List<CostCenterResponseDTO> getChildren(Long parentId) {
+        log.debug("Listing children cost centers for parent id: {}", parentId);
+
         // We still use findByParentId but map the results to DTOs
         return repository.findByParentId(parentId)
                 .stream()
@@ -133,8 +173,9 @@ public class CostCenterService {
      */
     private void validateActiveStatus(CostCenterRequest request) {
         if (request.isAllowsMovement() && !request.isActive()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Consistency error: Cannot allow movements on an inactive Cost Center.");
+            throw new InvalidOperationException(
+                    "Consistency error: Cannot allow movements on an inactive Cost Center."
+            );
         }
     }
 
@@ -149,7 +190,7 @@ public class CostCenterService {
 
         if (request.getParentId() != null) {
             CostCenter parent = repository.findById(request.getParentId())
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent cost center not found"));
+                    .orElseThrow(() -> new ResourceNotFoundException("CostCenter (parent)", request.getParentId()));
 
             costCenter.setParent(parent);
             costCenter.setLevel(parent.getLevel() + 1);
@@ -176,8 +217,11 @@ public class CostCenterService {
 
     private CostCenter findEntityById(Long id) {
         Company company = companyContext.getCurrentCompany();
+
+        log.debug("Finding cost center by id: {} for company: {}", id, company.getId());
+
         return repository.findById(id)
                 .filter(cc -> cc.getCompany().getId().equals(company.getId()))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cost Center not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("CostCenter", id));
     }
 }

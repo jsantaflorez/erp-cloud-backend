@@ -34,5 +34,7 @@ public class TaxRequest {
 
     @NotNull(message = "Accounting account ID is required")
     private Long accountId;
+
+    private Boolean active;
 }
 

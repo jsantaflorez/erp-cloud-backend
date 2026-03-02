@@ -5,7 +5,8 @@ import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.JournalEntry;
 import com.erp.erp_cloud.entity.JournalEntryItem;
-
+import com.erp.erp_cloud.exception.InvalidOperationException;
+import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
@@ -16,10 +17,10 @@ import com.erp.erp_cloud.entity.Company;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
@@ -31,22 +32,27 @@ import java.util.Optional;
 @Transactional(readOnly = true) // Best practice: Read-only by default
 public class JournalEntryService {
 
+    private static final Logger log = LoggerFactory.getLogger(JournalEntryService.class);
+
     private final JournalEntryRepository repository;
     private final ChartOfAccountsRepository accountRepository;
     private final ThirdPartyRepository thirdPartyRepository;
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
     private final CompanyContext companyContext;
+
     /**
      * Creates a new accounting voucher with full validation.
      */
-
     @Transactional
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
         Company currentCompany = companyContext.getCurrentCompany();
+
+        log.debug("Creating journal entry for company: {}", currentCompany.getId());
+
         // 1. Shallow Validation (Items list and amounts)
         if (request.getItems() == null || request.getItems().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Journal entry must contain at least one item.");
+            throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
         // 2. Double-Entry Balance Validation
@@ -54,18 +60,20 @@ public class JournalEntryService {
 
         // 3. Document Type & Consecutive Handling
         var docType = docTypeService.findById(request.getDocumentTypeId());
-        if (!docType.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This Document Type does not belong to the tenant company.");
+        if (!docType.getCompany().getId().equals(currentCompany.getId())) {
+            throw new InvalidOperationException("This Document Type does not belong to the tenant company.");
         }
+
         JournalEntry entry = new JournalEntry();
         entry.setDocumentType(docType);
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
-        entry.setCompany(companyContext.getCurrentCompany());
+        entry.setCompany(currentCompany);
 
         // Assign consecutive logic
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
         entry.setConsecutive(nextNumber);
+
         // Build the unique string: Prefix + Number (e.g., "FV-1")
         String formattedNumber;
         if (docType.getPrefix() != null && !docType.getPrefix().isBlank()) {
@@ -75,8 +83,7 @@ public class JournalEntryService {
         }
         entry.setDocumentNumber(formattedNumber);
 
-
-
+        log.debug("Assigned document number: {} with consecutive: {}", formattedNumber, nextNumber);
 
         // 4. Map and Validate Items
         for (var itemDto : request.getItems()) {
@@ -84,59 +91,69 @@ public class JournalEntryService {
             validateItemAmounts(itemDto.getDebit(), itemDto.getCredit());
 
             JournalEntryItem item = new JournalEntryItem();
-        // 5. Account Validation
+
+            // 5. Account Validation
             var account = accountRepository.findById(itemDto.getAccountId())
-                    .filter(a -> a.getCompany().getId().equals(companyContext.getCurrentCompany().getId())) // SECURITY
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                            "Account not found or access denied: " + itemDto.getAccountId()));
+                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId())) // SECURITY
+                    .orElseThrow(() -> new ResourceNotFoundException("ChartOfAccount", itemDto.getAccountId()));
 
             if (!account.isActive()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Account " + account.getCode() + " is inactive and cannot receive new entries.");
+                throw new InvalidOperationException(
+                        String.format("Account %s is inactive and cannot receive new entries.", account.getCode())
+                );
             }
-
 
             if (!account.isPostingAccount()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Account " + account.getCode() + " is not a posting account.");
+                throw new InvalidOperationException(
+                        String.format("Account %s is not a posting account.", account.getCode())
+                );
             }
+
             // 6. Third Party Validation
             if (account.isRequiresThirdParty()) {
-                    if (itemDto.getThirdPartyId() == null) {
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account " + account.getCode() + " requires a Third Party.");
-                    }
+                if (itemDto.getThirdPartyId() == null) {
+                    throw new InvalidOperationException(
+                            String.format("Account %s requires a Third Party.", account.getCode())
+                    );
+                }
+
                 var thirdParty = thirdPartyRepository.findById(itemDto.getThirdPartyId())
                         .filter(tp -> tp.getCompany().getId().equals(currentCompany.getId()))
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Third Party not found."));
-
+                        .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", itemDto.getThirdPartyId()));
 
                 if (thirdParty.getActive() != null && !thirdParty.getActive()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Third Party " + thirdParty.getLegalDisplayName() + " is inactive.");
+                    throw new InvalidOperationException(
+                            String.format("Third Party %s is inactive.", thirdParty.getLegalDisplayName())
+                    );
                 }
+
                 item.setThirdParty(thirdParty);
-
-
-
             }
 
             // 7. Cost Center Validation
             if (account.isRequiresCostCenter()) {
                 if (itemDto.getCostCenterId() == null) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Account " + account.getCode() + " requires a Cost Center.");
+                    throw new InvalidOperationException(
+                            String.format("Account %s requires a Cost Center.", account.getCode())
+                    );
                 }
 
                 var costCenter = costCenterRepository.findById(itemDto.getCostCenterId())
                         .filter(cc -> cc.getCompany().getId().equals(currentCompany.getId()))
-                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cost Center not found."));
+                        .orElseThrow(() -> new ResourceNotFoundException("CostCenter", itemDto.getCostCenterId()));
 
                 if (!costCenter.isActive()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cost Center '" + costCenter.getName() + "' is inactive.");
+                    throw new InvalidOperationException(
+                            String.format("Cost Center '%s' is inactive.", costCenter.getName())
+                    );
                 }
 
                 if (!costCenter.isAllowsMovement()) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cost Center '" + costCenter.getName() + "' does not allow movements.");
+                    throw new InvalidOperationException(
+                            String.format("Cost Center '%s' does not allow movements.", costCenter.getName())
+                    );
                 }
+
                 item.setCostCenter(costCenter);
             }
 
@@ -148,13 +165,17 @@ public class JournalEntryService {
             entry.addItem(item);
         }
 
-
-
         JournalEntry savedEntry = repository.save(entry);
+
+        log.info("Journal entry created successfully with id: {} and document number: {}",
+                savedEntry.getId(), savedEntry.getDocumentNumber());
+
         return mapToResponseDTO(savedEntry);
     }
 
-
+    /**
+     * Validates that total debits equal total credits (Double-Entry Accounting Rule)
+     */
     private void validateAccountingBalance(List<JournalEntryRequest.ItemRequest> items) {
         BigDecimal totalDebit = items.stream()
                 .map(i -> Optional.ofNullable(i.getDebit()).orElse(BigDecimal.ZERO))
@@ -167,11 +188,16 @@ public class JournalEntryService {
                 .setScale(2, RoundingMode.HALF_UP);
 
         if (totalDebit.compareTo(totalCredit) != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s", totalDebit, totalCredit));
+            log.warn("Unbalanced transaction detected. Debit: {}, Credit: {}", totalDebit, totalCredit);
+            throw new InvalidOperationException(
+                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s", totalDebit, totalCredit)
+            );
         }
     }
 
+    /**
+     * Validates that each item has either debit OR credit, but not both or neither
+     */
     private void validateItemAmounts(BigDecimal debit, BigDecimal credit) {
         BigDecimal safeDebit = Optional.ofNullable(debit).orElse(BigDecimal.ZERO);
         BigDecimal safeCredit = Optional.ofNullable(credit).orElse(BigDecimal.ZERO);
@@ -180,15 +206,34 @@ public class JournalEntryService {
         boolean hasCredit = safeCredit.compareTo(BigDecimal.ZERO) > 0;
 
         if (hasDebit && hasCredit) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item cannot have both a debit and a credit.");
+            throw new InvalidOperationException("An item cannot have both a debit and a credit.");
         }
         if (!hasDebit && !hasCredit) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An item must have a value greater than zero.");
+            throw new InvalidOperationException("An item must have a value greater than zero.");
         }
     }
 
+    /**
+     * Lists journal entries with optional filtering and pagination
+     */
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+        Company company = companyContext.getCurrentCompany();
 
+        log.debug("Listing journal entries for company: {} with filters - search: {}, dates: {} to {}",
+                company.getId(), searchTerm, startDate, endDate);
+
+        return repository.searchEntries(company, searchTerm, startDate, endDate, pageable)
+                .map(this::mapToResponseDTO);
+    }
+
+    /**
+     * Maps JournalEntry entity to response DTO
+     */
     private JournalEntryResponseDTO mapToResponseDTO(JournalEntry entry) {
+        if (entry == null) {
+            return null;
+        }
+
         JournalEntryResponseDTO response = new JournalEntryResponseDTO();
         response.setId(entry.getId());
         response.setDocumentNumber(entry.getDocumentNumber());
@@ -218,13 +263,4 @@ public class JournalEntryService {
         response.setItems(itemDtos);
         return response;
     }
-
-
-     public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate, LocalDate endDate, Pageable pageable) {
-        return repository.searchEntries(companyContext.getCurrentCompany(), searchTerm, startDate, endDate, pageable)
-                .map(this::mapToResponseDTO);
-    }
-
-
 }
-
