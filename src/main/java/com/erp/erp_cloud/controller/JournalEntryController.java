@@ -54,4 +54,11 @@ public class JournalEntryController {
         );
     }
 
+
+    @GetMapping("/by-number/{documentNumber}")
+    public ResponseEntity<JournalEntryResponseDTO> getByDocumentNumber(
+                @PathVariable String documentNumber) {
+    return ResponseEntity.ok(service.findByDocumentNumber(documentNumber));
+        }
+
 }

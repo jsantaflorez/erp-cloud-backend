@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import java.time.LocalDate;
+import java.util.Optional;
 
 
 @Repository
@@ -31,4 +32,8 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             Pageable pageable);
+
+    // In JournalEntryRepository
+    boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber);
+    Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber);
 }

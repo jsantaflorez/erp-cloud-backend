@@ -29,7 +29,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true) // Best practice: Read-only by default
+@Transactional(readOnly = true)
 public class JournalEntryService {
 
     private static final Logger log = LoggerFactory.getLogger(JournalEntryService.class);
@@ -40,6 +40,7 @@ public class JournalEntryService {
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
     private final CompanyContext companyContext;
+    private final AccountingEngineService accountingEngine;
 
     /**
      * Creates a new accounting voucher with full validation.
@@ -50,15 +51,36 @@ public class JournalEntryService {
 
         log.debug("Creating journal entry for company: {}", currentCompany.getId());
 
-        // 1. Shallow Validation (Items list and amounts)
+        // 1. Validate entry date
+        validateEntryDate(request.getEntryDate());
+
+        // 2. Shallow Validation (Items list)
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
-        // 2. Double-Entry Balance Validation
+        // 3. Double-Entry Balance Validation
         validateAccountingBalance(request.getItems());
 
-        // 3. Document Type & Consecutive Handling
+        // 4. PRE-VALIDATE all items (fail fast before creating entities)
+        for (int i = 0; i < request.getItems().size(); i++) {
+            var itemDto = request.getItems().get(i);
+            final int itemIndex = i;
+
+            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
+
+            // Verify account exists and is valid
+            var account = accountRepository.findById(itemDto.getAccountId())
+                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId()))
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            String.format("Account not found for item #%d", itemIndex + 1),
+                            itemDto.getAccountId())
+                    );
+
+            validateAccountState(account);
+        }
+
+        // 5. Document Type & Consecutive Handling
         var docType = docTypeService.findById(request.getDocumentTypeId());
         if (!docType.getCompany().getId().equals(currentCompany.getId())) {
             throw new InvalidOperationException("This Document Type does not belong to the tenant company.");
@@ -75,102 +97,140 @@ public class JournalEntryService {
         entry.setConsecutive(nextNumber);
 
         // Build the unique string: Prefix + Number (e.g., "FV-1")
-        String formattedNumber;
         if (docType.getPrefix() != null && !docType.getPrefix().isBlank()) {
-            formattedNumber = docType.getPrefix() + "-" + nextNumber;
+            entry.setDocumentNumber(docType.getPrefix().trim() + "-" + nextNumber);
         } else {
-            formattedNumber = nextNumber.toString(); // Just "1", "2", etc.
+            entry.setDocumentNumber(nextNumber.toString());
         }
-        entry.setDocumentNumber(formattedNumber);
 
-        log.debug("Assigned document number: {} with consecutive: {}", formattedNumber, nextNumber);
+        // Safety check for duplicate document numbers
+        if (repository.existsByCompanyAndDocumentNumber(currentCompany, entry.getDocumentNumber())) {
+            log.error("Duplicate document number detected: {}", entry.getDocumentNumber());
+            throw new InvalidOperationException(
+                    "Document number already exists. Please try again."
+            );
+        }
 
-        // 4. Map and Validate Items
+        // 6. Map and Validate Items
         for (var itemDto : request.getItems()) {
-            // Validation of Debit vs Credit (Using safeDebit logic)
-            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit());
-
-            JournalEntryItem item = new JournalEntryItem();
-
-            // 5. Account Validation
+            // Account Retrieval (already validated above, so we can safely get it)
             var account = accountRepository.findById(itemDto.getAccountId())
-                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId())) // SECURITY
+                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId()))
                     .orElseThrow(() -> new ResourceNotFoundException("ChartOfAccount", itemDto.getAccountId()));
 
-            if (!account.isActive()) {
-                throw new InvalidOperationException(
-                        String.format("Account %s is inactive and cannot receive new entries.", account.getCode())
-                );
-            }
-
-            if (!account.isPostingAccount()) {
-                throw new InvalidOperationException(
-                        String.format("Account %s is not a posting account.", account.getCode())
-                );
-            }
-
-            // 6. Third Party Validation
-            if (account.isRequiresThirdParty()) {
-                if (itemDto.getThirdPartyId() == null) {
-                    throw new InvalidOperationException(
-                            String.format("Account %s requires a Third Party.", account.getCode())
-                    );
-                }
-
-                var thirdParty = thirdPartyRepository.findById(itemDto.getThirdPartyId())
-                        .filter(tp -> tp.getCompany().getId().equals(currentCompany.getId()))
-                        .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", itemDto.getThirdPartyId()));
-
-                if (thirdParty.getActive() != null && !thirdParty.getActive()) {
-                    throw new InvalidOperationException(
-                            String.format("Third Party %s is inactive.", thirdParty.getLegalDisplayName())
-                    );
-                }
-
-                item.setThirdParty(thirdParty);
-            }
-
-            // 7. Cost Center Validation
-            if (account.isRequiresCostCenter()) {
-                if (itemDto.getCostCenterId() == null) {
-                    throw new InvalidOperationException(
-                            String.format("Account %s requires a Cost Center.", account.getCode())
-                    );
-                }
-
-                var costCenter = costCenterRepository.findById(itemDto.getCostCenterId())
-                        .filter(cc -> cc.getCompany().getId().equals(currentCompany.getId()))
-                        .orElseThrow(() -> new ResourceNotFoundException("CostCenter", itemDto.getCostCenterId()));
-
-                if (!costCenter.isActive()) {
-                    throw new InvalidOperationException(
-                            String.format("Cost Center '%s' is inactive.", costCenter.getName())
-                    );
-                }
-
-                if (!costCenter.isAllowsMovement()) {
-                    throw new InvalidOperationException(
-                            String.format("Cost Center '%s' does not allow movements.", costCenter.getName())
-                    );
-                }
-
-                item.setCostCenter(costCenter);
-            }
-
+            JournalEntryItem item = new JournalEntryItem();
             item.setAccount(account);
-            item.setDebit(Optional.ofNullable(itemDto.getDebit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
-            item.setCredit(Optional.ofNullable(itemDto.getCredit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+
+            // --- INTEGRATION: ACCOUNTING ENGINE (TAX AUTO-CHECK) ---
+            // Get the actual amount (either debit or credit, already validated that only one exists)
+            BigDecimal baseAmount = itemDto.getDebit() != null ? itemDto.getDebit() : itemDto.getCredit();
+
+            if (baseAmount != null && baseAmount.compareTo(BigDecimal.ZERO) > 0) {
+                var taxCheck = accountingEngine.calculateTax(account, baseAmount);
+                if (taxCheck.isTaxable()) {
+                    log.info("Tax detected for account {}: {} at rate {}%",
+                            account.getCode(), taxCheck.getTaxName(), taxCheck.getRate());
+                    // Note: In advanced scenarios, we could automatically inject a NEW item here.
+                }
+            }
+
+            // Standard Third Party & Cost Center Logic
+            handleThirdParty(item, itemDto, account, currentCompany);
+            handleCostCenter(item, itemDto, account, currentCompany);
+
+            // Set amounts with proper scale
+            BigDecimal debit = itemDto.getDebit() != null
+                    ? itemDto.getDebit().setScale(2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            BigDecimal credit = itemDto.getCredit() != null
+                    ? itemDto.getCredit().setScale(2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+
+            item.setDebit(debit);
+            item.setCredit(credit);
             item.setDescription(itemDto.getDescription());
 
             entry.addItem(item);
         }
 
-        JournalEntry savedEntry = repository.save(entry);
+        return mapToResponseDTO(repository.save(entry));
+    }
 
-        log.info("Journal entry created successfully with id: {} and document number: {}",
-                savedEntry.getId(), savedEntry.getDocumentNumber());
+    /**
+     * Validates entry date to prevent future dates and optionally backdated entries
+     */
+    private void validateEntryDate(LocalDate entryDate) {
+        if (entryDate == null) {
+            throw new InvalidOperationException("Entry date is required");
+        }
 
-        return mapToResponseDTO(savedEntry);
+        LocalDate today = LocalDate.now();
+
+        // Prevent future dates
+        if (entryDate.isAfter(today)) {
+            throw new InvalidOperationException("Entry date cannot be in the future");
+        }
+
+        // Optional: Prevent entries too far in the past (e.g., 90 days)
+        LocalDate minAllowedDate = today.minusDays(90);
+        if (entryDate.isBefore(minAllowedDate)) {
+            throw new InvalidOperationException(
+                    String.format("Entry date cannot be older than %s (90 days)", minAllowedDate)
+            );
+        }
+
+        // TODO: Add fiscal period validation when implemented
+        // Company company = companyContext.getCurrentCompany();
+        // if (entryDate.isBefore(company.getCurrentFiscalPeriodStart())) {
+        //     throw new InvalidOperationException(
+        //         "Cannot create entries before current fiscal period start date"
+        //     );
+        // }
+    }
+
+    private void validateAccountState(ChartOfAccounts account) {
+        if (!account.isActive()) {
+            throw new InvalidOperationException(
+                    String.format("Account %s - %s is inactive and cannot be used",
+                            account.getCode(), account.getName())
+            );
+        }
+        if (!account.isPostingAccount()) {
+            throw new InvalidOperationException(
+                    String.format("Account %s - %s is not a posting account",
+                            account.getCode(), account.getName())
+            );
+        }
+    }
+
+    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
+                                  ChartOfAccounts account, Company company) {
+        if (account.isRequiresThirdParty()) {
+            if (dto.getThirdPartyId() == null) {
+                throw new InvalidOperationException(
+                        String.format("Account %s requires a Third Party", account.getCode())
+                );
+            }
+            var tp = thirdPartyRepository.findById(dto.getThirdPartyId())
+                    .filter(t -> t.getCompany().getId().equals(company.getId()))
+                    .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId()));
+            item.setThirdParty(tp);
+        }
+    }
+
+    private void handleCostCenter(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
+                                  ChartOfAccounts account, Company company) {
+        if (account.isRequiresCostCenter()) {
+            if (dto.getCostCenterId() == null) {
+                throw new InvalidOperationException(
+                        String.format("Account %s requires a Cost Center", account.getCode())
+                );
+            }
+            var cc = costCenterRepository.findById(dto.getCostCenterId())
+                    .filter(c -> c.getCompany().getId().equals(company.getId()))
+                    .orElseThrow(() -> new ResourceNotFoundException("CostCenter", dto.getCostCenterId()));
+            item.setCostCenter(cc);
+        }
     }
 
     /**
@@ -190,7 +250,8 @@ public class JournalEntryService {
         if (totalDebit.compareTo(totalCredit) != 0) {
             log.warn("Unbalanced transaction detected. Debit: {}, Credit: {}", totalDebit, totalCredit);
             throw new InvalidOperationException(
-                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s", totalDebit, totalCredit)
+                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s",
+                            totalDebit, totalCredit)
             );
         }
     }
@@ -198,7 +259,7 @@ public class JournalEntryService {
     /**
      * Validates that each item has either debit OR credit, but not both or neither
      */
-    private void validateItemAmounts(BigDecimal debit, BigDecimal credit) {
+    private void validateItemAmounts(BigDecimal debit, BigDecimal credit, int itemIndex) {
         BigDecimal safeDebit = Optional.ofNullable(debit).orElse(BigDecimal.ZERO);
         BigDecimal safeCredit = Optional.ofNullable(credit).orElse(BigDecimal.ZERO);
 
@@ -206,17 +267,24 @@ public class JournalEntryService {
         boolean hasCredit = safeCredit.compareTo(BigDecimal.ZERO) > 0;
 
         if (hasDebit && hasCredit) {
-            throw new InvalidOperationException("An item cannot have both a debit and a credit.");
+            throw new InvalidOperationException(
+                    String.format("Item #%d cannot have both debit (%.2f) and credit (%.2f)",
+                            itemIndex + 1, safeDebit, safeCredit)
+            );
         }
         if (!hasDebit && !hasCredit) {
-            throw new InvalidOperationException("An item must have a value greater than zero.");
+            throw new InvalidOperationException(
+                    String.format("Item #%d must have either debit or credit greater than zero",
+                            itemIndex + 1)
+            );
         }
     }
 
     /**
      * Lists journal entries with optional filtering and pagination
      */
-    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate, LocalDate endDate, Pageable pageable) {
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate,
+                                                     LocalDate endDate, Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
 
         log.debug("Listing journal entries for company: {} with filters - search: {}, dates: {} to {}",
@@ -224,6 +292,20 @@ public class JournalEntryService {
 
         return repository.searchEntries(company, searchTerm, startDate, endDate, pageable)
                 .map(this::mapToResponseDTO);
+    }
+
+    /**
+     * Find journal entry by document number
+     */
+    public JournalEntryResponseDTO findByDocumentNumber(String documentNumber) {
+        Company company = companyContext.getCurrentCompany();
+
+        JournalEntry entry = repository.findByCompanyAndDocumentNumber(company, documentNumber)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Journal entry with document number '" + documentNumber + "' not found"
+                ));
+
+        return mapToResponseDTO(entry);
     }
 
     /**
