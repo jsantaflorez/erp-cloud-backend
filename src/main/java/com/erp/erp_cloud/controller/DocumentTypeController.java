@@ -28,6 +28,16 @@ public class DocumentTypeController {
                 .body(new ApiResponse<>("Document type created successfully", true, data));
     }
 
+    /**
+     * Updates an existing document type, including the new default balancing account.
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<ApiResponse<DocumentTypeResponseDTO>> update(
+            @PathVariable Long id,
+            @Valid @RequestBody DocumentTypeRequest request) {
+        DocumentTypeResponseDTO data = documentTypeservice.update(id, request);
+        return ResponseEntity.ok(new ApiResponse<>("Document type updated successfully", true, data));
+    }
 
 
 
@@ -56,13 +66,13 @@ public class DocumentTypeController {
     @PatchMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         documentTypeservice.deactivate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Document type deactivated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Document type deactivated successfully", true,null));
     }
 
     @PatchMapping("/{id}/activate")
     public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
         documentTypeservice.activate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Document type activated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Document type activated successfully", true,null));
     }
 
     @PatchMapping("/{id}/reset-consecutive")
@@ -70,7 +80,7 @@ public class DocumentTypeController {
             @PathVariable Long id,
             @RequestParam Long newValue) {
         documentTypeservice.resetConsecutive(id, newValue);
-        return ResponseEntity.ok(new ApiResponse<>("Consecutive reset successfully to " + newValue, true));
+        return ResponseEntity.ok(new ApiResponse<>("Consecutive reset successfully to " + newValue, true,null));
     }
 
 

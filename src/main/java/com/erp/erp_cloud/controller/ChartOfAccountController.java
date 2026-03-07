@@ -143,7 +143,7 @@ public class ChartOfAccountController {
     @DeleteMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         chartOfAccountService.deactivate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Account deactivated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Account deactivated successfully", true, null));
     }
 
 
@@ -155,7 +155,7 @@ public class ChartOfAccountController {
     @PatchMapping("/{id}/activate")
     public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
         chartOfAccountService.activate(id);
-        return ResponseEntity.ok(new ApiResponse("Account activated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Account activated successfully", true, null));
 
     }
 

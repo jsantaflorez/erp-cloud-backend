@@ -1,10 +1,7 @@
 package com.erp.erp_cloud.service;
 
-import com.erp.erp_cloud.dto.JournalEntryRequest;
-import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
-import com.erp.erp_cloud.entity.ChartOfAccounts;
-import com.erp.erp_cloud.entity.JournalEntry;
-import com.erp.erp_cloud.entity.JournalEntryItem;
+import com.erp.erp_cloud.dto.*;
+import com.erp.erp_cloud.entity.*;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
@@ -12,7 +9,6 @@ import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
-import com.erp.erp_cloud.entity.Company;
 
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -24,8 +20,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.math.BigDecimal;
 
 @Service
 @RequiredArgsConstructor
@@ -43,306 +43,268 @@ public class JournalEntryService {
     private final AccountingEngineService accountingEngine;
 
     /**
-     * Creates a new accounting voucher with full validation.
+     * Creates a new journal entry with automated taxes and balancing.
      */
     @Transactional
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
         Company currentCompany = companyContext.getCurrentCompany();
-
         log.debug("Creating journal entry for company: {}", currentCompany.getId());
 
-        // 1. Validate entry date
+        // 1. Header Validation
         validateEntryDate(request.getEntryDate());
-
-        // 2. Shallow Validation (Items list)
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
-        // 3. Double-Entry Balance Validation
-        validateAccountingBalance(request.getItems());
-
-        // 4. PRE-VALIDATE all items (fail fast before creating entities)
-        for (int i = 0; i < request.getItems().size(); i++) {
-            var itemDto = request.getItems().get(i);
-            final int itemIndex = i;
-
-            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
-
-            // Verify account exists and is valid
-            var account = accountRepository.findById(itemDto.getAccountId())
-                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId()))
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            String.format("Account not found for item #%d", itemIndex + 1),
-                            itemDto.getAccountId())
-                    );
-
-            validateAccountState(account);
-        }
-
-        // 5. Document Type & Consecutive Handling
-        var docType = docTypeService.findById(request.getDocumentTypeId());
-        if (!docType.getCompany().getId().equals(currentCompany.getId())) {
-            throw new InvalidOperationException("This Document Type does not belong to the tenant company.");
-        }
-
+        // 2. Document Setup
+        DocumentType docType = docTypeService.findById(request.getDocumentTypeId());
         JournalEntry entry = new JournalEntry();
         entry.setDocumentType(docType);
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
         entry.setCompany(currentCompany);
 
-        // Assign consecutive logic
+        // Consecutive logic
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
         entry.setConsecutive(nextNumber);
+        entry.setDocumentNumber(generateDocNumber(docType, nextNumber));
 
-        // Build the unique string: Prefix + Number (e.g., "FV-1")
-        if (docType.getPrefix() != null && !docType.getPrefix().isBlank()) {
-            entry.setDocumentNumber(docType.getPrefix().trim() + "-" + nextNumber);
-        } else {
-            entry.setDocumentNumber(nextNumber.toString());
-        }
+        // 3. PASS 1: Process User Items
+        for (int i = 0; i < request.getItems().size(); i++) {
+            var itemDto = request.getItems().get(i);
+            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), i);
 
-        // Safety check for duplicate document numbers
-        if (repository.existsByCompanyAndDocumentNumber(currentCompany, entry.getDocumentNumber())) {
-            log.error("Duplicate document number detected: {}", entry.getDocumentNumber());
-            throw new InvalidOperationException(
-                    "Document number already exists. Please try again."
-            );
-        }
-
-        // 6. Map and Validate Items
-        for (var itemDto : request.getItems()) {
-            // Account Retrieval (already validated above, so we can safely get it)
-            var account = accountRepository.findById(itemDto.getAccountId())
-                    .filter(a -> a.getCompany().getId().equals(currentCompany.getId()))
-                    .orElseThrow(() -> new ResourceNotFoundException("ChartOfAccount", itemDto.getAccountId()));
+            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), currentCompany);
 
             JournalEntryItem item = new JournalEntryItem();
             item.setAccount(account);
+            item.setDebit(Optional.ofNullable(itemDto.getDebit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            item.setCredit(Optional.ofNullable(itemDto.getCredit()).orElse(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            item.setDescription(itemDto.getDescription());
 
-            // --- INTEGRATION: ACCOUNTING ENGINE (TAX AUTO-CHECK) ---
-            // Get the actual amount (either debit or credit, already validated that only one exists)
-            BigDecimal baseAmount = itemDto.getDebit() != null ? itemDto.getDebit() : itemDto.getCredit();
-
-            if (baseAmount != null && baseAmount.compareTo(BigDecimal.ZERO) > 0) {
-                var taxCheck = accountingEngine.calculateTax(account, baseAmount);
-                if (taxCheck.isTaxable()) {
-                    log.info("Tax detected for account {}: {} at rate {}%",
-                            account.getCode(), taxCheck.getTaxName(), taxCheck.getRate());
-                    // Note: In advanced scenarios, we could automatically inject a NEW item here.
-                }
-            }
-
-            // Standard Third Party & Cost Center Logic
             handleThirdParty(item, itemDto, account, currentCompany);
             handleCostCenter(item, itemDto, account, currentCompany);
 
-            // Set amounts with proper scale
-            BigDecimal debit = itemDto.getDebit() != null
-                    ? itemDto.getDebit().setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
-            BigDecimal credit = itemDto.getCredit() != null
-                    ? itemDto.getCredit().setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
-
-            item.setDebit(debit);
-            item.setCredit(credit);
-            item.setDescription(itemDto.getDescription());
-
             entry.addItem(item);
         }
+
+        // 4. PASS 2: Apply System Adjustments (Taxes & Balance)
+        applySystemAdjustments(entry, currentCompany);
+
+        // 5. Final Integrity Check
+        finalIntegrityCheck(entry);
 
         return mapToResponseDTO(repository.save(entry));
     }
 
     /**
-     * Validates entry date to prevent future dates and optionally backdated entries
+     * Logic to calculate taxes and close the accounting gap.
      */
-    private void validateEntryDate(LocalDate entryDate) {
-        if (entryDate == null) {
-            throw new InvalidOperationException("Entry date is required");
+    private void applySystemAdjustments(JournalEntry entry, Company company) {
+        BigDecimal runningBalance = BigDecimal.ZERO;
+        List<JournalEntryItem> taxLines = new ArrayList<>();
+
+        // Calculate balance from user items and detect taxes
+        for (JournalEntryItem item : entry.getItems()) {
+            runningBalance = runningBalance.add(item.getDebit()).subtract(item.getCredit());
+
+            BigDecimal baseForTax = item.getDebit().add(item.getCredit());
+            TaxCalculationResult taxCheck = accountingEngine.calculateTax(item.getAccount(), baseForTax);
+
+            if (taxCheck.isTaxable() && taxCheck.getTaxAmount().compareTo(BigDecimal.ZERO) > 0) {
+                JournalEntryItem taxItem = createAutoTaxItem(taxCheck, item, company);
+                taxLines.add(taxItem);
+                runningBalance = runningBalance.add(taxItem.getDebit()).subtract(taxItem.getCredit());
+            }
         }
 
-        LocalDate today = LocalDate.now();
+        // Add detected tax lines
+        taxLines.forEach(entry::addItem);
 
-        // Prevent future dates
-        if (entryDate.isAfter(today)) {
-            throw new InvalidOperationException("Entry date cannot be in the future");
-        }
-
-        // Optional: Prevent entries too far in the past (e.g., 90 days)
-        LocalDate minAllowedDate = today.minusDays(90);
-        if (entryDate.isBefore(minAllowedDate)) {
-            throw new InvalidOperationException(
-                    String.format("Entry date cannot be older than %s (90 days)", minAllowedDate)
-            );
-        }
-
-        // TODO: Add fiscal period validation when implemented
-        // Company company = companyContext.getCurrentCompany();
-        // if (entryDate.isBefore(company.getCurrentFiscalPeriodStart())) {
-        //     throw new InvalidOperationException(
-        //         "Cannot create entries before current fiscal period start date"
-        //     );
-        // }
-    }
-
-    private void validateAccountState(ChartOfAccounts account) {
-        if (!account.isActive()) {
-            throw new InvalidOperationException(
-                    String.format("Account %s - %s is inactive and cannot be used",
-                            account.getCode(), account.getName())
-            );
-        }
-        if (!account.isPostingAccount()) {
-            throw new InvalidOperationException(
-                    String.format("Account %s - %s is not a posting account",
-                            account.getCode(), account.getName())
-            );
+        // Apply final balancing line if a gap exists
+        if (runningBalance.compareTo(BigDecimal.ZERO) != 0) {
+            applyBalancingLine(entry, runningBalance, entry.getDocumentType());
         }
     }
 
-    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account, Company company) {
+    private JournalEntryItem createAutoTaxItem(TaxCalculationResult tax, JournalEntryItem parent, Company company) {
+        JournalEntryItem item = new JournalEntryItem();
+        ChartOfAccounts taxAccount = accountRepository.findById(tax.getAccountId())
+                .orElseThrow(() -> new ResourceNotFoundException("Tax Account", tax.getAccountId()));
+
+        item.setAccount(taxAccount);
+        item.setDescription("Auto-tax: " + tax.getTaxName());
+        item.setThirdParty(parent.getThirdParty()); // Inherit third party
+
+        BigDecimal amount = tax.getTaxAmount().setScale(2, RoundingMode.HALF_UP);
+        if ("D".equalsIgnoreCase(tax.getSign())) {
+            item.setDebit(amount);
+            item.setCredit(BigDecimal.ZERO);
+        } else {
+            item.setDebit(BigDecimal.ZERO);
+            item.setCredit(amount);
+        }
+        return item;
+    }
+
+    private void applyBalancingLine(JournalEntry entry, BigDecimal runningBalance, DocumentType docType) {
+        if (docType.getDefaultAccount() == null) {
+            throw new InvalidOperationException("Document " + docType.getCode() + " is unbalanced, but no default account is configured.");
+        }
+
+        JournalEntryItem balanceLine = new JournalEntryItem();
+        balanceLine.setAccount(docType.getDefaultAccount());
+        balanceLine.setDescription("System balance adjustment");
+
+        BigDecimal gap = runningBalance.abs().setScale(2, RoundingMode.HALF_UP);
+        if (runningBalance.signum() > 0) { // More debits than credits
+            balanceLine.setCredit(gap);
+            balanceLine.setDebit(BigDecimal.ZERO);
+        } else {
+            balanceLine.setDebit(gap);
+            balanceLine.setCredit(BigDecimal.ZERO);
+        }
+        entry.addItem(balanceLine);
+    }
+
+    private void finalIntegrityCheck(JournalEntry entry) {
+        BigDecimal total = entry.getItems().stream()
+                .map(i -> i.getDebit().subtract(i.getCredit()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (total.setScale(2, RoundingMode.HALF_UP).compareTo(BigDecimal.ZERO) != 0) {
+            throw new InvalidOperationException("Final document is unbalanced. Difference: " + total);
+        }
+    }
+
+    private String generateDocNumber(DocumentType docType, Long consecutive) {
+        return (docType.getPrefix() != null && !docType.getPrefix().isBlank())
+                ? docType.getPrefix().trim() + "-" + consecutive
+                : consecutive.toString();
+    }
+
+    private ChartOfAccounts fetchAndValidateAccount(Long accountId, Company company) {
+        ChartOfAccounts account = accountRepository.findById(accountId)
+                .filter(a -> a.getCompany().getId().equals(company.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
+
+        if (!account.isActive() || !account.isPostingAccount()) {
+            throw new InvalidOperationException("Account " + account.getCode() + " is inactive or not a posting account.");
+        }
+        return account;
+    }
+
+    // --- HELPER VALIDATIONS ---
+
+    private void validateEntryDate(LocalDate date) {
+        if (date == null) throw new InvalidOperationException("Entry date is required");
+        if (date.isAfter(LocalDate.now())) throw new InvalidOperationException("Future dates not allowed");
+        if (date.isBefore(LocalDate.now().minusDays(90))) throw new InvalidOperationException("Date too far in the past");
+    }
+
+    private void validateItemAmounts(BigDecimal debit, BigDecimal credit, int index) {
+        boolean hasDebit = debit != null && debit.compareTo(BigDecimal.ZERO) > 0;
+        boolean hasCredit = credit != null && credit.compareTo(BigDecimal.ZERO) > 0;
+        if (hasDebit && hasCredit) throw new InvalidOperationException("Item #" + (index+1) + " cannot have both debit and credit.");
+        if (!hasDebit && !hasCredit) throw new InvalidOperationException("Item #" + (index+1) + " must have a value.");
+    }
+
+    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Company company) {
         if (account.isRequiresThirdParty()) {
-            if (dto.getThirdPartyId() == null) {
-                throw new InvalidOperationException(
-                        String.format("Account %s requires a Third Party", account.getCode())
-                );
-            }
-            var tp = thirdPartyRepository.findById(dto.getThirdPartyId())
+            if (dto.getThirdPartyId() == null) throw new InvalidOperationException("Third party required for " + account.getCode());
+            item.setThirdParty(thirdPartyRepository.findById(dto.getThirdPartyId())
                     .filter(t -> t.getCompany().getId().equals(company.getId()))
-                    .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId()));
-            item.setThirdParty(tp);
+                    .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId())));
         }
     }
 
-    private void handleCostCenter(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account, Company company) {
+    private void handleCostCenter(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Company company) {
         if (account.isRequiresCostCenter()) {
-            if (dto.getCostCenterId() == null) {
-                throw new InvalidOperationException(
-                        String.format("Account %s requires a Cost Center", account.getCode())
-                );
-            }
-            var cc = costCenterRepository.findById(dto.getCostCenterId())
+            if (dto.getCostCenterId() == null) throw new InvalidOperationException("Cost center required for " + account.getCode());
+            item.setCostCenter(costCenterRepository.findById(dto.getCostCenterId())
                     .filter(c -> c.getCompany().getId().equals(company.getId()))
-                    .orElseThrow(() -> new ResourceNotFoundException("CostCenter", dto.getCostCenterId()));
-            item.setCostCenter(cc);
+                    .orElseThrow(() -> new ResourceNotFoundException("CostCenter", dto.getCostCenterId())));
         }
     }
 
-    /**
-     * Validates that total debits equal total credits (Double-Entry Accounting Rule)
-     */
-    private void validateAccountingBalance(List<JournalEntryRequest.ItemRequest> items) {
-        BigDecimal totalDebit = items.stream()
-                .map(i -> Optional.ofNullable(i.getDebit()).orElse(BigDecimal.ZERO))
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
+    // --- READ METHODS ---
 
-        BigDecimal totalCredit = items.stream()
-                .map(i -> Optional.ofNullable(i.getCredit()).orElse(BigDecimal.ZERO))
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
-
-        if (totalDebit.compareTo(totalCredit) != 0) {
-            log.warn("Unbalanced transaction detected. Debit: {}, Credit: {}", totalDebit, totalCredit);
-            throw new InvalidOperationException(
-                    String.format("Unbalanced transaction. Total Debit: %s, Total Credit: %s",
-                            totalDebit, totalCredit)
-            );
-        }
-    }
-
-    /**
-     * Validates that each item has either debit OR credit, but not both or neither
-     */
-    private void validateItemAmounts(BigDecimal debit, BigDecimal credit, int itemIndex) {
-        BigDecimal safeDebit = Optional.ofNullable(debit).orElse(BigDecimal.ZERO);
-        BigDecimal safeCredit = Optional.ofNullable(credit).orElse(BigDecimal.ZERO);
-
-        boolean hasDebit = safeDebit.compareTo(BigDecimal.ZERO) > 0;
-        boolean hasCredit = safeCredit.compareTo(BigDecimal.ZERO) > 0;
-
-        if (hasDebit && hasCredit) {
-            throw new InvalidOperationException(
-                    String.format("Item #%d cannot have both debit (%.2f) and credit (%.2f)",
-                            itemIndex + 1, safeDebit, safeCredit)
-            );
-        }
-        if (!hasDebit && !hasCredit) {
-            throw new InvalidOperationException(
-                    String.format("Item #%d must have either debit or credit greater than zero",
-                            itemIndex + 1)
-            );
-        }
-    }
-
-    /**
-     * Lists journal entries with optional filtering and pagination
-     */
-    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate startDate,
-                                                     LocalDate endDate, Pageable pageable) {
-        Company company = companyContext.getCurrentCompany();
-
-        log.debug("Listing journal entries for company: {} with filters - search: {}, dates: {} to {}",
-                company.getId(), searchTerm, startDate, endDate);
-
-        return repository.searchEntries(company, searchTerm, startDate, endDate, pageable)
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate start, LocalDate end, Pageable pageable) {
+        return repository.searchEntries(companyContext.getCurrentCompany(), searchTerm, start, end, pageable)
                 .map(this::mapToResponseDTO);
     }
 
-    /**
-     * Find journal entry by document number
-     */
-    public JournalEntryResponseDTO findByDocumentNumber(String documentNumber) {
-        Company company = companyContext.getCurrentCompany();
+    public JournalEntryResponseDTO findByDocumentNumber(String docNum) {
+        return repository.findByCompanyAndDocumentNumber(companyContext.getCurrentCompany(), docNum)
+                .map(this::mapToResponseDTO)
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", docNum));
+    }
 
-        JournalEntry entry = repository.findByCompanyAndDocumentNumber(company, documentNumber)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Journal entry with document number '" + documentNumber + "' not found"
+    @Transactional(readOnly = true)
+    public TrialBalanceReport getTrialBalanceReport() {
+        Company company = companyContext.getCurrentCompany();
+        List<TrialBalanceLine> lines = accountRepository.getTrialBalance(company);
+
+        BigDecimal totalDebit = BigDecimal.ZERO;
+        BigDecimal totalCredit = BigDecimal.ZERO;
+
+        for (TrialBalanceLine line : lines) {
+            totalDebit = totalDebit.add(line.getTotalDebit());
+            totalCredit = totalCredit.add(line.getTotalCredit());
+        }
+
+
+        Map<String, BigDecimal> summary = lines.stream()
+                .collect(Collectors.groupingBy(
+                        line -> getAccountClassName(line.getAccountCode()),
+                        Collectors.reducing(
+                                BigDecimal.ZERO,
+                                TrialBalanceLine::getNetBalance,
+                                BigDecimal::add
+                        )
                 ));
 
-        return mapToResponseDTO(entry);
+        boolean isBalanced = totalDebit.setScale(2, RoundingMode.HALF_UP)
+                .compareTo(totalCredit.setScale(2, RoundingMode.HALF_UP)) == 0;
+
+        return new TrialBalanceReport(lines, totalDebit, totalCredit, isBalanced, summary);
     }
 
     /**
-     * Maps JournalEntry entity to response DTO
+     * Helper to translate the first digit of the code into a Category Name
      */
+    private String getAccountClassName(String code) {
+        char firstDigit = (code != null && !code.isEmpty()) ? code.charAt(0) : '0';
+        return switch (firstDigit) {
+            case '1' -> "1 - Assets";
+            case '2' -> "2 - Liabilities";
+            case '3' -> "3 - Equity";
+            case '4' -> "4 - Income";
+            case '5' -> "5 - Expenses";
+            case '6', '7' -> "6/7 - Costs";
+            default -> "Other";
+        };
+    }
+
     private JournalEntryResponseDTO mapToResponseDTO(JournalEntry entry) {
-        if (entry == null) {
-            return null;
-        }
+        JournalEntryResponseDTO dto = new JournalEntryResponseDTO();
+        dto.setId(entry.getId());
+        dto.setDocumentNumber(entry.getDocumentNumber());
+        dto.setEntryDate(entry.getEntryDate());
+        dto.setDescription(entry.getDescription());
 
-        JournalEntryResponseDTO response = new JournalEntryResponseDTO();
-        response.setId(entry.getId());
-        response.setDocumentNumber(entry.getDocumentNumber());
-        response.setEntryDate(entry.getEntryDate());
-        response.setDescription(entry.getDescription());
+        dto.setItems(entry.getItems().stream().map(item -> {
+            JournalEntryResponseDTO.ItemResponse i = new JournalEntryResponseDTO.ItemResponse();
+            i.setId(item.getId());
+            i.setAccountCode(item.getAccount().getCode());
+            i.setAccountName(item.getAccount().getName());
+            i.setDebit(item.getDebit());
+            i.setCredit(item.getCredit());
+            if (item.getThirdParty() != null) i.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
+            if (item.getCostCenter() != null) i.setCostCenterName(item.getCostCenter().getName());
+            return i;
+        }).toList());
 
-        List<JournalEntryResponseDTO.ItemResponse> itemDtos = entry.getItems().stream().map(item -> {
-            JournalEntryResponseDTO.ItemResponse itemDto = new JournalEntryResponseDTO.ItemResponse();
-            itemDto.setId(item.getId());
-            itemDto.setAccountCode(item.getAccount().getCode());
-            itemDto.setAccountName(item.getAccount().getName());
-            itemDto.setDebit(item.getDebit());
-            itemDto.setCredit(item.getCredit());
-
-            if (item.getThirdParty() != null) {
-                itemDto.setThirdPartyIdNumber(item.getThirdParty().getDocumentNumber());
-                itemDto.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
-            }
-
-            if (item.getCostCenter() != null) {
-                itemDto.setCostCenterName(item.getCostCenter().getName());
-            }
-
-            return itemDto;
-        }).toList();
-
-        response.setItems(itemDtos);
-        return response;
+        return dto;
     }
 }

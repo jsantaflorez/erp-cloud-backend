@@ -41,6 +41,10 @@ public class DocumentTypeResponseDTO {
      */
     private boolean active;
 
+    private Long defaultAccountId;
+    private String defaultAccountCode;
+    private String defaultAccountName;
+
     /**
      * UI Helper: Combines Code and Name for select inputs.
      * Example: "FV - Factura de Venta"

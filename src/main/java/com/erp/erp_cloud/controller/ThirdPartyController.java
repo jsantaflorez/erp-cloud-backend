@@ -65,7 +65,7 @@ public class ThirdPartyController {
     @PatchMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         thirdPartyService.deactivate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Third Party deactivated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Third Party deactivated successfully", true,null));
     }
 
 
@@ -74,7 +74,7 @@ public class ThirdPartyController {
     @PatchMapping("/{id}/activate")
     public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
         thirdPartyService.activate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Third Party activated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Third Party activated successfully", true,null));
     }
 
 

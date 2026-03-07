@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.repository;
 
+import com.erp.erp_cloud.dto.TrialBalanceLine;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -61,4 +62,23 @@ public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts
 
 
     boolean existsByParent(ChartOfAccounts parent);
+
+
+
+
+    @Query("""
+    SELECT new com.erp.erp_cloud.dto.TrialBalanceLine(
+        a.code, 
+        a.name, 
+        COALESCE(SUM(i.debit), 0), 
+        COALESCE(SUM(i.credit), 0)
+    )
+    FROM JournalEntryItem i
+    JOIN i.account a
+    WHERE a.company = :company
+    GROUP BY a.code, a.name
+    ORDER BY a.code ASC
+""")
+    List<TrialBalanceLine> getTrialBalance(@Param("company") Company company);
+
 }

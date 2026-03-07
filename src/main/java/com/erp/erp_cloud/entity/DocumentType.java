@@ -54,6 +54,13 @@ public class DocumentType implements Serializable {
     @Column(name = "legal_resolution", length = 255)
     private String legalResolution;
 
+  //  The default account used to balance entries for this document type
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_account_id")
+    private ChartOfAccounts defaultAccount;
+
+
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "company_id", nullable = false)
     @JsonIgnore

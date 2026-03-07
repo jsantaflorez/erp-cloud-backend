@@ -99,7 +99,7 @@ public class CostCenterController {
     @DeleteMapping("/{id}/deactivate")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         costCenterService.deactivate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Cost Center deactivated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Cost Center deactivated successfully", true,null));
     }
 
 
@@ -112,7 +112,7 @@ public class CostCenterController {
     @PatchMapping("/{id}/activate")
     public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
         costCenterService.activate(id);
-        return ResponseEntity.ok(new ApiResponse<>("Cost Center activated successfully", true));
+        return ResponseEntity.ok(new ApiResponse<>("Cost Center activated successfully", true,null));
     }
 
 }

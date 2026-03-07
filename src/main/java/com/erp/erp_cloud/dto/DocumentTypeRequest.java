@@ -26,4 +26,5 @@ public class DocumentTypeRequest {
 
     @Size(max = 255, message = "Legal resolution details are too long")
     private String legalResolution;
+    private Long defaultAccountId;
 }

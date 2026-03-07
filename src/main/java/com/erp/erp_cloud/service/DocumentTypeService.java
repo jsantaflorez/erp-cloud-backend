@@ -7,6 +7,7 @@ import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
+import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.DocumentTypeRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,44 @@ public class DocumentTypeService {
     private static final Logger log = LoggerFactory.getLogger(DocumentTypeService.class);
 
     private final DocumentTypeRepository repository;
+    private final ChartOfAccountsRepository accountRepository;
     private final CompanyContext companyContext;
+    @Transactional
+    public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
+        Company company = companyContext.getCurrentCompany();
+        log.debug("Creating document type with code: {} for company: {}", request.getCode(), company.getId());
+
+        if (repository.existsByCompanyAndCode(company, request.getCode())) {
+            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
+        }
+
+        DocumentType entity = new DocumentType();
+        entity.setCompany(company);
+        entity.setActive(true);
+        entity.setCurrentConsecutive(0L);
+
+        mapRequestToEntity(entity, request, company);
+
+        return mapToResponseDTO(repository.save(entity));
+    }
+    // =====================================================
+    // UPDATE
+    // =====================================================
+
+    @Transactional
+    public DocumentTypeResponseDTO update(Long id, DocumentTypeRequest request) {
+        DocumentType existing = findById(id);
+        Company company = companyContext.getCurrentCompany();
+
+        if (!existing.getCode().equals(request.getCode()) &&
+                repository.existsByCompanyAndCode(company, request.getCode())) {
+            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
+        }
+
+        mapRequestToEntity(existing, request, company);
+        return mapToResponseDTO(repository.save(existing));
+    }
+
 
     @Transactional(readOnly = true)
     public List<DocumentTypeResponseDTO> listAll() {
@@ -58,33 +96,6 @@ public class DocumentTypeService {
         return mapToResponseDTO(findById(id));
     }
 
-    @Transactional
-    public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
-        Company company = companyContext.getCurrentCompany();
-
-        log.debug("Creating document type with code: {} for company: {}", request.getCode(), company.getId());
-
-        // Validar duplicados
-        if (repository.existsByCompanyAndCode(company, request.getCode())) {
-            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
-        }
-
-        DocumentType entity = new DocumentType();
-        entity.setCompany(company);
-        entity.setActive(true);
-
-        // Map fields from Request DTO
-        updateEntityFromRequest(entity, request);
-
-        if (entity.getCurrentConsecutive() == null) {
-            entity.setCurrentConsecutive(0L);
-        }
-
-        DocumentType saved = repository.save(entity);
-        log.info("Document type created successfully with id: {}", saved.getId());
-
-        return mapToResponseDTO(saved);
-    }
 
     /**
      * Increments the consecutive and returns the next number.
@@ -168,30 +179,6 @@ public class DocumentTypeService {
                 .collect(Collectors.toList());
     }
 
-    // =====================================================
-    // UPDATE
-    // =====================================================
-
-    @Transactional
-    public DocumentTypeResponseDTO update(Long id, DocumentTypeRequest request) {
-        log.debug("Updating document type id: {}", id);
-
-        DocumentType existing = findById(id);
-
-        // Si cambió el código, validar que no exista
-        if (!existing.getCode().equals(request.getCode())) {
-            if (repository.existsByCompanyAndCode(companyContext.getCurrentCompany(), request.getCode())) {
-                throw new DuplicateResourceException("DocumentType", "code", request.getCode());
-            }
-        }
-
-        updateEntityFromRequest(existing, request);
-        DocumentType updated = repository.save(existing);
-
-        log.info("Document type {} updated successfully", id);
-
-        return mapToResponseDTO(updated);
-    }
 
     // --- MAPPING HELPERS ---
 
@@ -203,6 +190,23 @@ public class DocumentTypeService {
         entity.setLegalResolution(request.getLegalResolution());
     }
 
+    private void mapRequestToEntity(DocumentType entity, DocumentTypeRequest request, Company company) {
+        entity.setCode(request.getCode());
+        entity.setName(request.getName());
+        entity.setPrefix(request.getPrefix());
+        entity.setAccounting(request.getIsAccounting());
+        entity.setLegalResolution(request.getLegalResolution());
+
+        // Handle the default account logic
+        if (request.getDefaultAccountId() != null) {
+            var account = accountRepository.findById(request.getDefaultAccountId())
+                    .filter(a -> a.getCompany().getId().equals(company.getId()))
+                    .orElseThrow(() -> new ResourceNotFoundException("Account", request.getDefaultAccountId()));
+            entity.setDefaultAccount(account);
+        } else {
+            entity.setDefaultAccount(null);
+        }
+    }
     private DocumentTypeResponseDTO mapToResponseDTO(DocumentType entity) {
         DocumentTypeResponseDTO dto = new DocumentTypeResponseDTO();
         dto.setId(entity.getId());
@@ -213,10 +217,14 @@ public class DocumentTypeService {
         dto.setAccounting(entity.isAccounting());
         dto.setActive(entity.isActive());
 
-        // Full Description for dropdowns
+        if (entity.getDefaultAccount() != null) {
+            dto.setDefaultAccountId(entity.getDefaultAccount().getId());
+            dto.setDefaultAccountCode(entity.getDefaultAccount().getCode());
+            dto.setDefaultAccountName(entity.getDefaultAccount().getName());
+        }
+
         dto.setFullDescription(entity.getCode() + " - " + entity.getName());
 
-        // Hybrid Prefix Logic for Preview
         Long next = (entity.getCurrentConsecutive() != null ? entity.getCurrentConsecutive() : 0L) + 1;
         if (entity.getPrefix() != null && !entity.getPrefix().trim().isEmpty()) {
             dto.setNextNumberPreview(entity.getPrefix().trim() + "-" + next);
