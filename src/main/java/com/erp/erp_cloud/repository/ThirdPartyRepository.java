@@ -25,9 +25,22 @@ public interface  ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
     );
 
 
-    // List all for the company with pagination
 
-    //List<ThirdParty> findByCompany(Company company);
+
+
+    @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
+            "FROM JournalEntry e JOIN e.items item " +
+            "WHERE item.thirdParty = :thirdParty")
+    boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
+
+    @Query("SELECT tp FROM ThirdParty tp WHERE tp.company = :company AND " +
+            "(LOWER(tp.businessName) = LOWER(:name) OR " +
+            "CONCAT(LOWER(tp.firstName), ' ', LOWER(tp.lastName)) = LOWER(:name))")
+    Optional<ThirdParty> findByCompanyAndLegalName(@Param("company") Company company,
+                                                   @Param("name") String name);
+
+
+
     @Query("SELECT t FROM ThirdParty t WHERE t.company = :company AND (" +
             "LOWER(t.businessName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
             "LOWER(t.firstName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
@@ -37,6 +50,8 @@ public interface  ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
                                       @Param("searchTerm") String searchTerm,
                                       Pageable pageable);
     Page<ThirdParty> findByCompany(Company company, Pageable pageable);
+
+
 
 
 }

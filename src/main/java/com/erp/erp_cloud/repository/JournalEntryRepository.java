@@ -2,12 +2,13 @@ package com.erp.erp_cloud.repository;
 
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.JournalEntry;
+import com.erp.erp_cloud.entity.ThirdParty;
 import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import org.springframework.data.domain.Page;
+
 import org.springframework.data.domain.Pageable;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -33,7 +34,15 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("endDate") LocalDate endDate,
             Pageable pageable);
 
-    // In JournalEntryRepository
+
+
+    @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
+            "FROM JournalEntry e JOIN e.items item " +
+            "WHERE item.thirdParty = :thirdParty")
+    boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
+
     boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber);
     Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber);
+
+
 }

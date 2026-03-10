@@ -2,6 +2,7 @@ package com.erp.erp_cloud.entity;
 
 import com.erp.erp_cloud.enums.TaxRegime;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Email;
 import lombok.Data;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -17,7 +18,21 @@ import java.util.Optional;
                         name = "uk_company_document",
                         columnNames = {"company_id", "document_number"}
                 )
+        },
+        indexes = {
+                // Index for searching by business name (legal entities)
+                @Index(name = "idx_third_party_business_name", columnList = "company_id, business_name"),
+
+                // Index for searching by person name (natural persons)
+                @Index(name = "idx_third_party_names", columnList = "company_id, first_name, last_name"),
+
+                // Index for document type searches (e.g., "all NITs")
+                @Index(name = "idx_third_party_doc_type", columnList = "company_id, document_type"),
+
+                // Index for active status queries (common filter)
+                @Index(name = "idx_third_party_active", columnList = "company_id, active")
         }
+
 )
 @Data
 // 1. Evita el error de ByteBuddyInterceptor (Proxy de Hibernate)
@@ -65,6 +80,7 @@ public class ThirdParty implements Serializable {
     @Column(name = "business_name", length = 150)
     private String businessName;
 
+    @Email
     @Column(name = "email", length = 150)
     private String email;
 
@@ -79,7 +95,7 @@ public class ThirdParty implements Serializable {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "city_id", nullable = false)
-    // QUITAMOS @JsonIgnore para que Postman pueda enviar el ID
+
     private City city;
 
     @Column(name = "active", nullable = false)

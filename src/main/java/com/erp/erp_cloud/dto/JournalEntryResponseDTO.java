@@ -20,6 +20,7 @@ public class JournalEntryResponseDTO {
         private String accountName;
         private BigDecimal debit;
         private BigDecimal credit;
+        private String description;
         private String thirdPartyIdNumber;
         private String thirdPartyName;
         private String costCenterName;

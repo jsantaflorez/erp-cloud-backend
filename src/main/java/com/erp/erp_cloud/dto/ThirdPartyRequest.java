@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.dto;
 
 import com.erp.erp_cloud.enums.TaxRegime;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -32,7 +33,10 @@ public class ThirdPartyRequest {
     @Size(max = 50, message = "BusinessName field can store  up to 150 characters")
     private String businessName;
 
+    // In ThirdPartyRequest
+    @Email(message = "Invalid email format")
     private String email;
+
 
 
 

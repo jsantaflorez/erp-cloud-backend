@@ -10,8 +10,10 @@ import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.CostCenterRepository;
+import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.repository.CityRepository;
+
 import com.erp.erp_cloud.security.context.CompanyContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -20,6 +22,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +39,7 @@ public class ThirdPartyService {
     private final CompanyContext companyContext;
     private final CityRepository cityRepository;
     private final CostCenterRepository costCenterRepository;
+    private final JournalEntryRepository journalEntryRepository;
 
     // =====================================================
     // CREATE
@@ -97,6 +105,69 @@ public class ThirdPartyService {
     }
 
     /**
+     * Users often search for third parties by name, not just document number
+     */
+
+    @Transactional(readOnly = true)
+    public ThirdPartyResponseDTO getByLegalName(String legalName) {
+        Company company = companyContext.getCurrentCompany();
+
+        log.debug("Searching third party by legal name: {} for company: {}", legalName, company.getId());
+
+        // This requires a custom query in your repository
+        ThirdParty entity = thirdPartyRepository
+                .findByCompanyAndLegalName(company, legalName)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        String.format("ThirdParty with legal name '%s' not found", legalName)
+                ));
+
+        return mapToResponseDTO(entity);
+    }
+
+    /**
+     * For importing third parties from external systems:
+     *
+     **/
+
+    @Transactional
+    public List<ThirdPartyResponseDTO> createBulk(List<ThirdPartyRequest> requests) {
+        Company company = companyContext.getCurrentCompany();
+
+        log.info("Creating {} third parties in bulk for company: {}", requests.size(), company.getId());
+
+        List<ThirdParty> entities = new ArrayList<>();
+        Set<String> documentNumbers = new HashSet<>();
+
+        // Validate all first
+        for (ThirdPartyRequest request : requests) {
+            // Check for duplicates within the batch
+            if (documentNumbers.contains(request.getDocumentNumber())) {
+                throw new DuplicateResourceException(
+                        "ThirdParty", "documentNumber", request.getDocumentNumber() + " (duplicate in batch)"
+                );
+            }
+            documentNumbers.add(request.getDocumentNumber());
+
+            // Check for duplicates in database
+            if (thirdPartyRepository.existsByCompanyAndDocumentNumber(company, request.getDocumentNumber())) {
+                throw new DuplicateResourceException("ThirdParty", "documentNumber", request.getDocumentNumber());
+            }
+
+            ThirdParty entity = new ThirdParty();
+            entity.setCompany(company);
+            entity.setActive(true);
+            mapRequestToEntity(request, entity);
+            entities.add(entity);
+        }
+
+        // Save all at once
+        List<ThirdParty> saved = thirdPartyRepository.saveAll(entities);
+        log.info("Successfully created {} third parties in bulk", saved.size());
+
+        return saved.stream().map(this::mapToResponseDTO).toList();
+    }
+
+    /**
      * Retrieves a third party by document number and maps it to a DTO.
      * This is useful for the frontend to quickly find a customer/vendor by their ID.
      */
@@ -121,14 +192,27 @@ public class ThirdPartyService {
     // UPDATE
     // =====================================================
 
-    public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
+       public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
         log.debug("Updating third party id: {}", id);
 
         ThirdParty existing = findEntityById(id);
+
+        // Check if document number is being changed
+        if (!existing.getDocumentNumber().equals(request.getDocumentNumber())) {
+            // Validate new document number doesn't exist for another third party
+            if (thirdPartyRepository.existsByCompanyAndDocumentNumber(
+                    existing.getCompany(), request.getDocumentNumber())) {
+                throw new DuplicateResourceException(
+                        "ThirdParty", "documentNumber", request.getDocumentNumber()
+                );
+            }
+        }
+
         mapRequestToEntity(request, existing);
 
         ThirdParty updated = thirdPartyRepository.save(existing);
-        log.info("Third party {} updated successfully", id);
+        log.info("Third party {} updated successfully with document: {}",
+                id, updated.getDocumentNumber());
 
         return mapToResponseDTO(updated);
     }
@@ -140,7 +224,16 @@ public class ThirdPartyService {
         log.debug("Deactivating third party id: {}", id);
 
         ThirdParty tp = findEntityById(id);
-        // Note: In the future, we will check for movements here
+
+        // Check if third party has any journal entry movements
+        if (journalEntryRepository.existsByThirdParty(tp)) {
+            throw new InvalidOperationException(
+                    String.format("Cannot deactivate third party '%s' because it has accounting movements. " +
+                                    "Contact your administrator if you need to archive this record.",
+                            tp.getLegalDisplayName())
+            );
+        }
+
         tp.setActive(false);
         thirdPartyRepository.save(tp);
 
@@ -157,6 +250,41 @@ public class ThirdPartyService {
         log.info("Third party {} activated successfully", id);
     }
 
+
+    /**
+     * Calculates the Verification Digit (DV) for Colombian NIT using Modulo 11 algorithm.
+     * @param nit The document number string.
+     * @return The calculated single-digit integer.
+     */
+    private int calculateDV(String nit) {
+        int[] primes = {3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71};
+        int sum = 0;
+
+        String cleanNit = nit.replaceAll("[^0-9]", "");
+        if (cleanNit.isEmpty()) {
+            log.warn("Empty NIT after cleaning: {}", nit);
+            return 0;
+        }
+
+        // Validate NIT length (Colombian NITs are typically 9-10 digits)
+        if (cleanNit.length() > 15) {
+            log.error("NIT too long: {} (length: {})", cleanNit, cleanNit.length());
+            throw new InvalidOperationException(
+                    String.format("Invalid NIT length: %d digits (max 15)", cleanNit.length())
+            );
+        }
+
+        for (int i = 0; i < cleanNit.length(); i++) {
+            int digit = Character.getNumericValue(cleanNit.charAt(cleanNit.length() - 1 - i));
+            sum += (digit * primes[i]);
+        }
+
+        int remainder = sum % 11;
+        int dv = (remainder < 2) ? remainder : 11 - remainder;
+
+        log.debug("Calculated DV for NIT {}: {}", cleanNit, dv);
+        return dv;
+    }
     /**
      * Maps request DTO to entity, including all validations
      */
@@ -169,21 +297,44 @@ public class ThirdPartyService {
             entity.setVerificationDigit(calculateDV(request.getDocumentNumber()));
         }
 
+
         entity.setPersonType(request.getPersonType());
+
+        // Validate business name for legal entities
+        if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
+            if (request.getBusinessName() == null || request.getBusinessName().trim().isEmpty()) {
+                throw new InvalidOperationException(
+                        "Business name is required for legal entities (Persona Jurídica)"
+                );
+            }
+        }
+        // Validate names for natural persons
+        if ("NATURAL".equals(request.getPersonType())) {
+            if ((request.getFirstName() == null || request.getFirstName().trim().isEmpty()) ||
+                    (request.getLastName() == null || request.getLastName().trim().isEmpty())) {
+                throw new InvalidOperationException(
+                        "First name and last name are required for natural persons (Persona Natural)"
+                );
+            }
+        }
+
         entity.setTaxRegime(request.getTaxRegime());
         entity.setFirstName(request.getFirstName());
         entity.setMiddleName(request.getMiddleName());
         entity.setLastName(request.getLastName());
         entity.setSecondLastName(request.getSecondLastName());
         entity.setBusinessName(request.getBusinessName());
-        entity.setEmail(request.getEmail());
+        // Trim email to avoid whitespace issues
+        entity.setEmail(request.getEmail() != null ? request.getEmail().trim() : null);
         entity.setPhone(request.getPhone());
         entity.setMobile(request.getMobile());
         entity.setAddress(request.getAddress());
 
         // Validate and set City
         City city = cityRepository.findById(request.getCityId())
-                .orElseThrow(() -> new ResourceNotFoundException("City", request.getCityId()));
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        String.format("City with ID %d not found", request.getCityId())
+                ));
         entity.setCity(city);
 
         // Validate and set default Cost Center (optional)
@@ -234,31 +385,4 @@ public class ThirdPartyService {
         return dto;
     }
 
-    /**
-     * Calculates the Verification Digit (DV) for Colombian NIT using Modulo 11 algorithm.
-     * @param nit The document number string.
-     * @return The calculated single-digit integer.
-     */
-    private int calculateDV(String nit) {
-        int[] primes = {3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71};
-        int sum = 0;
-
-        // Remove any non-numeric characters just in case
-        String cleanNit = nit.replaceAll("[^0-9]", "");
-        if (cleanNit.isEmpty()) {
-            log.warn("Empty NIT after cleaning: {}", nit);
-            return 0;
-        }
-
-        for (int i = 0; i < cleanNit.length(); i++) {
-            int digit = Character.getNumericValue(cleanNit.charAt(cleanNit.length() - 1 - i));
-            sum += (digit * primes[i]);
-        }
-
-        int remainder = sum % 11;
-        int dv = (remainder < 2) ? remainder : 11 - remainder;
-
-        log.debug("Calculated DV for NIT {}: {}", cleanNit, dv);
-        return dv;
-    }
 }
