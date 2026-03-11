@@ -99,6 +99,7 @@ public class ChartOfAccountService {
             );
         }
 
+
         // 3. Inverse Cascade Validation
         if (Boolean.TRUE.equals(request.getPostingAccount()) && !existing.isPostingAccount()) {
             if (repository.existsByParent(existing)) {
@@ -106,7 +107,18 @@ public class ChartOfAccountService {
             }
         }
 
-        // 4. Handle Hierarchy and Context
+        // 4. Account class changes are allowed even with transactions
+        // BUSINESS RULE: We intentionally do NOT check for journal entries when changing account class.
+        // Rationale: Accountants may need to reclassify accounts retroactively for reporting purposes.
+        // Historical transactions remain unchanged; only future reporting is affected.
+       if (!existing.getAccountClass().equals(request.getAccountClass())) {
+            log.warn("Account class changed from {} to {} for account {} (id: {}). " +
+                            "This affects reporting but does not modify historical transactions.",
+                    existing.getAccountClass(), request.getAccountClass(), existing.getCode(), id);
+        }
+
+
+        // 5. Handle Hierarchy and Context
         ChartOfAccounts parentToValidate;
 
         if (request.getParentId() != null) {
@@ -149,10 +161,10 @@ public class ChartOfAccountService {
             }
         }
 
-        // 5. Validate code structure (parentToValidate is never null unless it's truly Level 1)
+        // 6. Validate code structure (parentToValidate is never null unless it's truly Level 1)
         validateCodeStructure(parentToValidate, request);
 
-        // 6. Map the rest of the fields
+        // 7. Map the rest of the fields
         mapDtoToEntity(request, existing);
 
         ChartOfAccounts updated = repository.save(existing);
@@ -291,25 +303,66 @@ public class ChartOfAccountService {
                 .map(this::mapToResponseDTO);
     }
 
+    /**
+     * Deactivates an account to prevent future use.
+     *
+     * BUSINESS RULE: Accounts can be deactivated even if they have journal entries.
+     * This is intentional to allow accountants to "close" accounts that should no longer
+     * be used while preserving historical data integrity.
+     *
+     * Deactivated accounts:
+     * - Cannot be used in new journal entries (enforced at journal entry creation)
+     * - Remain visible in reports for historical transactions
+     * - Can be reactivated if needed
+     *
+     * NOTE: We do NOT check for existing transactions before deactivation.
+     */
     public void deactivate(Long id) {
         log.debug("Deactivating chart of account id: {}", id);
 
         ChartOfAccounts account = findEntityById(id);
+
+        // Optional: Check if account has children (business decision)
+        if (repository.existsByParent(account)) {
+            log.warn("Deactivating account {} which has child accounts. " +
+                    "Consider deactivating children first.", account.getCode());
+            // NOTE: We log but allow the operation.
+            // Alternative: throw exception to enforce hierarchy deactivation
+        }
+
         account.setActive(false);
         repository.save(account);
 
-        log.info("Chart of account {} deactivated successfully", id);
+        log.info("Chart of account {} ({}) deactivated successfully. " +
+                "Historical transactions are preserved.", id, account.getCode());
     }
 
+    /**
+     * Reactivates a previously deactivated account.
+     */
     public void activate(Long id) {
         log.debug("Activating chart of account id: {}", id);
 
         ChartOfAccounts account = findEntityById(id);
+
+        // Validate parent is active before reactivating child
+        if (account.getParent() != null && !account.getParent().isActive()) {
+            throw new InvalidOperationException(
+                    String.format("Cannot activate account %s because its parent account %s is inactive. " +
+                                    "Please activate the parent first.",
+                            account.getCode(), account.getParent().getCode())
+            );
+        }
+
         account.setActive(true);
         repository.save(account);
 
         log.info("Chart of account {} activated successfully", id);
     }
+
+
+
+
 
     /**
      * Validates the accounting code length based on PUC standards:
@@ -370,8 +423,12 @@ public class ChartOfAccountService {
     }
 
     private boolean isDescendant(Long accountId, ChartOfAccounts currentParent) {
+        log.debug("Checking circular reference for account id: {} with parent: {}",
+                accountId, currentParent != null ? currentParent.getId() : null);
+
         while (currentParent != null) {
             if (accountId.equals(currentParent.getId())) {
+                log.warn("Circular reference detected: account {} is a descendant of itself", accountId);
                 return true;
             }
             currentParent = currentParent.getParent();

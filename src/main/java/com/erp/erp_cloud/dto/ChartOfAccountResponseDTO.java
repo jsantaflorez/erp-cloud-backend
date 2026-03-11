@@ -2,6 +2,7 @@ package com.erp.erp_cloud.dto;
 
 
 
+import com.erp.erp_cloud.enums.AccountNature;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,7 +17,7 @@ public class ChartOfAccountResponseDTO {
     private String code;
     private String name;
     private Byte level;
-    private String nature;
+    private  AccountNature nature;
     private String accountClass;
     private String accountType;
     private boolean postingAccount;

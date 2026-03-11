@@ -1,7 +1,9 @@
 package com.erp.erp_cloud.dto;
 
+import com.erp.erp_cloud.enums.AccountNature;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -16,12 +18,13 @@ public class ChartOfAccountRequest {
     @Size(max = 150, message = "Name cannot exceed 150 characters")
     private String name;
 
-    // Optional in DTO because the Service calculates it automatically based on parent
-    private Byte level;
 
-    @NotBlank(message = "Nature is required (D for Debit, C for Credit)")
-    @Size(min = 1, max = 1)
-    private String nature;
+
+
+    @NotNull(message = "Nature is required (D for Debit, C for Credit)")
+    private AccountNature nature;
+
+
 
     @NotBlank(message = "Account class is required")
     private String accountClass;
@@ -33,7 +36,6 @@ public class ChartOfAccountRequest {
 
     private Boolean requiresThirdParty = false;
     private Boolean requiresCostCenter = false;
-    private Boolean requiresSubCostCenter = false;
 
     private Boolean active = true;
 

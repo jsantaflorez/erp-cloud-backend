@@ -1,6 +1,9 @@
 package com.erp.erp_cloud.entity;
 
 
+import com.erp.erp_cloud.enums.AccountNature;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
 
@@ -13,8 +16,28 @@ import java.util.List;
         name = "chart_of_accounts",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_company_code", columnNames = {"company_id", "code"})
+        },
+        indexes = {
+                // For searching by code (most common query)
+                @Index(name = "idx_coa_company_code", columnList = "company_id, code"),
+
+                // For hierarchy queries (finding children)
+                @Index(name = "idx_coa_parent", columnList = "company_id, parent_id"),
+
+                // For filtering posting accounts (journal entry selector)
+                @Index(name = "idx_coa_posting", columnList = "company_id, posting_account, active"),
+
+                // For level-based queries
+                @Index(name = "idx_coa_level", columnList = "company_id, level, active"),
+
+                // For search by name
+                @Index(name = "idx_coa_name", columnList = "company_id, name"),
+
+                // For filtering by account class
+                @Index(name = "idx_coa_class", columnList = "company_id, account_class")
         }
 )
+
 @Data
 public class ChartOfAccounts {
 
@@ -24,6 +47,7 @@ public class ChartOfAccounts {
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "company_id", nullable = false)
+    @JsonIgnore  // Prevent infinite recursion
     private Company company;
 
     @Column(nullable = false, length = 20)
@@ -35,8 +59,10 @@ public class ChartOfAccounts {
     @Column(nullable = false)
     private Byte level;
 
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 1)
-    private String nature; // Keep as String for now if you prefer, but Enum is better
+    private AccountNature nature;
 
     @Column(nullable = false, length = 20)
     private String accountClass;
@@ -58,8 +84,10 @@ public class ChartOfAccounts {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
+    @JsonIgnoreProperties({"parent", "children", "company"})  // Prevent circular references
     private ChartOfAccounts parent;
 
     @OneToMany(mappedBy = "parent", fetch = FetchType.LAZY)
+    @JsonIgnore  // Don't serialize children to avoid deep object graphs
     private List<ChartOfAccounts> children = new ArrayList<>();
 }

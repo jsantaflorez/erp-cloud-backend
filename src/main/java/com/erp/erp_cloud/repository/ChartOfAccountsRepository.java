@@ -81,4 +81,15 @@ public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts
 """)
     List<TrialBalanceLine> getTrialBalance(@Param("company") Company company);
 
+
+    /**
+     * Checks if an account has any journal entry items.
+     * Used to prevent deletion/deactivation of accounts with movements.
+     */
+    @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
+            "FROM JournalEntryItem item " +
+            "WHERE item.account = :account")
+    boolean existsByAccount(@Param("account") ChartOfAccounts account);
+
+
 }
