@@ -42,6 +42,7 @@ public class JournalEntryService {
     private final DocumentTypeService docTypeService;
     private final CompanyContext companyContext;
     private final AccountingEngineService accountingEngine;
+    private final AccountingPeriodService accountingPeriodService;
 
     /**
      * Creates a new journal entry with automated taxes and balancing.
@@ -53,11 +54,15 @@ public class JournalEntryService {
 
         // 1. Header Validation
         validateEntryDate(request.getEntryDate());
+        // 2. PERIOD VALIDATION - The "Bouncer"
+        accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
+
+
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
-        // 2. Document Setup
+        // 3. Document Setup
         DocumentType docType = docTypeService.findById(request.getDocumentTypeId());
         if (!docType.getCompany().getId().equals(currentCompany.getId())) {
             throw new InvalidOperationException("This Document Type does not belong to the current company.");
@@ -81,7 +86,7 @@ public class JournalEntryService {
                     "Document number already exists. Please try again.");
         }
 
-        // 3. PASS 1: Process User Items
+        // 4. PASS 1: Process User Items
         for (int i = 0; i < request.getItems().size(); i++) {
             var itemDto = request.getItems().get(i);
             final int itemIndex = i;
@@ -110,10 +115,10 @@ public class JournalEntryService {
             entry.addItem(item);
         }
 
-        // 4. PASS 2: Apply System Adjustments (Taxes & Balance)
+        // 5. PASS 2: Apply System Adjustments (Taxes & Balance)
         applySystemAdjustments(entry, currentCompany);
 
-        // 5. Final Integrity Check
+        // 6. Final Integrity Check
         finalIntegrityCheck(entry);
 
         // Log if auto-balancing was applied
