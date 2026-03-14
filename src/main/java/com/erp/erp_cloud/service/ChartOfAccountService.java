@@ -444,7 +444,8 @@ public class ChartOfAccountService {
         entity.setName(dto.getName());
         entity.setNature(dto.getNature());
         entity.setAccountClass(dto.getAccountClass());
-        entity.setAccountType(dto.getAccountType());
+        entity.setAccountCategory(dto.getAccountCategory());
+        entity.setFinancialStatement(dto.getFinancialStatement());
         entity.setPostingAccount(dto.getPostingAccount());
         entity.setRequiresThirdParty(dto.getRequiresThirdParty());
         entity.setRequiresCostCenter(dto.getRequiresCostCenter());
@@ -452,6 +453,9 @@ public class ChartOfAccountService {
         if (dto.getActive() != null) {
             entity.setActive(dto.getActive());
         }
+
+        // displayOrder and closesAtYearEnd are auto-set based on category/statement
+        // They're set in @PrePersist/@PreUpdate
     }
 
     private ChartOfAccountResponseDTO mapToResponseDTO(ChartOfAccounts entity) {
@@ -460,28 +464,34 @@ public class ChartOfAccountService {
         }
 
         ChartOfAccountResponseDTO dto = new ChartOfAccountResponseDTO();
-
-        // Standard field mapping
         dto.setId(entity.getId());
         dto.setCode(entity.getCode());
         dto.setName(entity.getName());
         dto.setLevel(entity.getLevel());
         dto.setNature(entity.getNature());
+
+        // Enhanced fields
         dto.setAccountClass(entity.getAccountClass());
-        dto.setAccountType(entity.getAccountType());
+        dto.setAccountCategory(entity.getAccountCategory());
+        dto.setAccountCategoryDisplay(entity.getCategoryDisplayName());
+        dto.setFinancialStatement(entity.getFinancialStatement());
+        dto.setFinancialStatementDisplay(entity.getFinancialStatementDisplayName());
+        dto.setClosesAtYearEnd(entity.isClosesAtYearEnd());
+        dto.setDisplayOrder(entity.getDisplayOrder());
+
+        // Business rules
         dto.setPostingAccount(entity.isPostingAccount());
         dto.setRequiresThirdParty(entity.isRequiresThirdParty());
         dto.setRequiresCostCenter(entity.isRequiresCostCenter());
         dto.setActive(entity.isActive());
 
-        // Hierarchy mapping
+        // Hierarchy
         if (entity.getParent() != null) {
             dto.setParentCode(entity.getParent().getCode());
             dto.setParentName(entity.getParent().getName());
         }
 
-        // Formatted field for the UI
-        dto.setFullDescription(entity.getCode() + " - " + entity.getName());
+        dto.setFullDescription(entity.getFullDescription());
 
         return dto;
     }

@@ -1,9 +1,11 @@
 package com.erp.erp_cloud.dto;
 
+import com.erp.erp_cloud.enums.AccountCategory;
+import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.enums.AccountNature;
+import com.erp.erp_cloud.enums.FinancialStatement;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -18,27 +20,28 @@ public class ChartOfAccountRequest {
     @Size(max = 150, message = "Name cannot exceed 150 characters")
     private String name;
 
-
-
-
     @NotNull(message = "Nature is required (D for Debit, C for Credit)")
     private AccountNature nature;
 
+    @NotNull(message = "Account class is required")
+    private AccountClass accountClass;
 
+    @NotNull(message = "Account category is required")
+    private AccountCategory accountCategory;
 
-    @NotBlank(message = "Account class is required")
-    private String accountClass;
-
-    private String accountType;
+    @NotNull(message = "Financial statement is required")
+    private FinancialStatement financialStatement;
 
     @NotNull(message = "Posting account flag is required")
-    private Boolean postingAccount; // true = auxiliary account (allows movements)
+    private Boolean postingAccount;
 
     private Boolean requiresThirdParty = false;
+
     private Boolean requiresCostCenter = false;
 
     private Boolean active = true;
 
-    // ID of the parent account for hierarchy
     private Long parentId;
+
+    // displayOrder and closesAtYearEnd are auto-calculated, not in request
 }
