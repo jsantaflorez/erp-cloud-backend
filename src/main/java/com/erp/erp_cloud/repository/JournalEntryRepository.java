@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import org.springframework.data.domain.Pageable;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 
@@ -44,5 +45,31 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber);
     Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber);
 
+
+    /**
+     * Calculates account balances as of a specific date.
+     *
+     * Returns: [account_code, account_nature, total_debit, total_credit]
+     */
+    @Query("""
+        SELECT 
+            a.code,
+            CAST(a.nature AS string),
+            COALESCE(SUM(i.debit), 0),
+            COALESCE(SUM(i.credit), 0)
+        FROM JournalEntryItem i
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE a.company = :company
+          AND je.entryDate <= :asOfDate
+          AND a.postingAccount = true
+          AND a.active = true
+        GROUP BY a.code, a.nature
+        ORDER BY a.code
+    """)
+    List<Object[]> getAccountBalancesAsOfDate(
+            @Param("company") Company company,
+            @Param("asOfDate") LocalDate asOfDate
+    );
 
 }

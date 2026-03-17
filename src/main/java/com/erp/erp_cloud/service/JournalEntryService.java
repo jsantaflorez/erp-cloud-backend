@@ -1,7 +1,10 @@
 package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.*;
+import com.erp.erp_cloud.dto.reports.financial.TrialBalanceLineDetailed;
+import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReportDetailed;
 import com.erp.erp_cloud.entity.*;
+import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
@@ -9,6 +12,8 @@ import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.dto.TrialBalanceLine;  // ← Stays in dto/
+import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
 
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -425,21 +430,41 @@ public class JournalEntryService {
      * Generates a trial balance report with account class summaries.
      * Optimized for single-pass processing.
      */
-    @Transactional(readOnly = true)
-    public TrialBalanceReport getTrialBalanceReport() {
-        Company company = companyContext.getCurrentCompany();
-        List<TrialBalanceLine> lines = accountRepository.getTrialBalance(company);
 
-        // Single-pass calculation for better performance
+
+    /**
+     * Generates Trial Balance Report as of a specific date.
+     *
+     * @param asOfDate Date for the trial balance (null = current date)
+     * @return Complete trial balance report
+     */
+    public TrialBalanceReport getTrialBalanceReport(LocalDate asOfDate) {
+        Company company = companyContext.getCurrentCompany();
+
+        // Default to current date if not provided
+        if (asOfDate == null) {
+            asOfDate = LocalDate.now();
+        }
+
+        log.info("Generating Trial Balance for company: {} as of {}", company.getId(), asOfDate);
+
+        // Get trial balance lines from repository
+        List<TrialBalanceLine> lines = accountRepository.getTrialBalance(company, asOfDate);
+
+        // Calculate totals
         BigDecimal totalDebit = BigDecimal.ZERO;
         BigDecimal totalCredit = BigDecimal.ZERO;
-        Map<String, BigDecimal> summary = new HashMap<>();
-        int invalidCount = 0;
 
         for (TrialBalanceLine line : lines) {
             totalDebit = totalDebit.add(line.getTotalDebit());
             totalCredit = totalCredit.add(line.getTotalCredit());
+        }
 
+        // Generate summary by account class
+        Map<String, BigDecimal> summary = new HashMap<>();
+        int invalidCount = 0;
+
+        for (TrialBalanceLine line : lines) {
             if (line.getNetBalance() != null) {
                 String className = getAccountClassName(line.getAccountCode());
                 summary.merge(className, line.getNetBalance(), BigDecimal::add);
@@ -448,15 +473,180 @@ public class JournalEntryService {
             }
         }
 
-        // Log data quality issues
+        // Log if any invalid data was found
         if (invalidCount > 0) {
             log.warn("Found {} trial balance lines with null net balance", invalidCount);
         }
 
+        // Check if balanced
         boolean isBalanced = totalDebit.setScale(2, RoundingMode.HALF_UP)
                 .compareTo(totalCredit.setScale(2, RoundingMode.HALF_UP)) == 0;
 
-        return new TrialBalanceReport(lines, totalDebit, totalCredit, isBalanced, summary);
+        if (!isBalanced) {
+            log.warn("TRIAL BALANCE OUT OF BALANCE! Debit: {}, Credit: {}, Difference: {}",
+                    totalDebit, totalCredit, totalDebit.subtract(totalCredit));
+        }
+
+        // BUILD the report using Builder pattern
+        return TrialBalanceReport.builder()
+                .companyName(company.getLegalName())
+                .asOfDate(asOfDate)
+                .generatedAt(LocalDate.now())
+                .lines(lines)
+                .totalDebit(totalDebit)
+                .totalCredit(totalCredit)
+                .isBalanced(isBalanced)
+                .summary(summary)
+                .build();
+    }
+
+    /**
+     * Generates detailed Trial Balance with opening balances for a date range.
+     *
+     * Shows:
+     * - Opening balance (as of day before startDate)
+     * - Period activity (from startDate to endDate)
+     * - Closing balance (as of endDate)
+     *
+     * Business Rules:
+     * - Balance Sheet accounts (1,2,3): Opening balance = actual prior balance
+     * - Income Statement accounts (4,5,6,7): Opening balance = ZERO (always)
+     *
+     * @param startDate Start of the reporting period
+     * @param endDate End of the reporting period
+     * @return Detailed trial balance report
+     */
+    @Transactional(readOnly = true)
+    public TrialBalanceReportDetailed getTrialBalanceDetailed(
+            LocalDate startDate,
+            LocalDate endDate) {
+
+        Company company = companyContext.getCurrentCompany();
+
+        // Validation
+        if (startDate == null || endDate == null) {
+            throw new InvalidOperationException("Start date and end date are required");
+        }
+
+        if (startDate.isAfter(endDate)) {
+            throw new InvalidOperationException("Start date cannot be after end date");
+        }
+
+        log.info("Generating detailed Trial Balance for company: {} from {} to {}",
+                company.getId(), startDate, endDate);
+
+        // 1. Get opening balances (only for Balance Sheet accounts - classes 1,2,3)
+        Map<String, BigDecimal> openingBalances = new HashMap<>();
+        List<Object[]> openings = accountRepository.getOpeningBalances(company, startDate);
+
+        for (Object[] row : openings) {
+            String code = (String) row[0];
+            BigDecimal balance = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
+            openingBalances.put(code, balance.setScale(2, RoundingMode.HALF_UP));
+        }
+
+        log.debug("Retrieved opening balances for {} Balance Sheet accounts", openingBalances.size());
+
+        // 2. Get period activity (all accounts with activity in the period)
+        List<Object[]> activities = accountRepository.getPeriodActivity(company, startDate, endDate);
+
+        List<TrialBalanceLineDetailed> lines = new ArrayList<>();
+        BigDecimal totalOpeningBalance = BigDecimal.ZERO;
+        BigDecimal totalPeriodDebit = BigDecimal.ZERO;
+        BigDecimal totalPeriodCredit = BigDecimal.ZERO;
+        BigDecimal totalNetMovement = BigDecimal.ZERO;
+        BigDecimal totalClosingBalance = BigDecimal.ZERO;
+
+        Map<String, BigDecimal> summaryByClass = new HashMap<>();
+
+        for (Object[] row : activities) {
+            String code = (String) row[0];
+            String name = (String) row[1];
+            AccountClass accountClass = (AccountClass) row[2];
+            boolean closesAtYearEnd = (boolean) row[3];
+            BigDecimal periodDebit = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+            BigDecimal periodCredit = row[5] != null ? (BigDecimal) row[5] : BigDecimal.ZERO;
+
+            periodDebit = periodDebit.setScale(2, RoundingMode.HALF_UP);
+            periodCredit = periodCredit.setScale(2, RoundingMode.HALF_UP);
+
+            // CRITICAL BUSINESS RULE:
+            // Opening balance = 0 for Income Statement accounts (4,5,6,7) - temporary accounts
+            // Opening balance = actual for Balance Sheet accounts (1,2,3) - permanent accounts
+            BigDecimal opening = closesAtYearEnd
+                    ? BigDecimal.ZERO
+                    : openingBalances.getOrDefault(code, BigDecimal.ZERO);
+
+            BigDecimal netMovement = periodDebit.subtract(periodCredit);
+            BigDecimal closing = opening.add(netMovement);
+
+            String classDisplay = getAccountClassDisplay(accountClass);
+
+            TrialBalanceLineDetailed line = TrialBalanceLineDetailed.builder()
+                    .accountCode(code)
+                    .accountName(name)
+                    .accountClass(classDisplay)
+                    .isBalanceSheetAccount(!closesAtYearEnd)
+                    .openingBalance(opening)
+                    .periodDebit(periodDebit)
+                    .periodCredit(periodCredit)
+                    .netMovement(netMovement)
+                    .closingBalance(closing)
+                    .build();
+
+            lines.add(line);
+
+            // Update totals
+            totalOpeningBalance = totalOpeningBalance.add(opening);
+            totalPeriodDebit = totalPeriodDebit.add(periodDebit);
+            totalPeriodCredit = totalPeriodCredit.add(periodCredit);
+            totalNetMovement = totalNetMovement.add(netMovement);
+            totalClosingBalance = totalClosingBalance.add(closing);
+
+            // Update summary by class
+            summaryByClass.merge(classDisplay, closing, BigDecimal::add);
+        }
+
+        // Check if period is balanced (debits should equal credits)
+        boolean isBalanced = totalPeriodDebit.setScale(2, RoundingMode.HALF_UP)
+                .compareTo(totalPeriodCredit.setScale(2, RoundingMode.HALF_UP)) == 0;
+
+        if (!isBalanced) {
+            log.warn("DETAILED TRIAL BALANCE OUT OF BALANCE! Period Debit: {}, Period Credit: {}, Difference: {}",
+                    totalPeriodDebit, totalPeriodCredit, totalPeriodDebit.subtract(totalPeriodCredit));
+        }
+
+        log.info("Detailed Trial Balance generated: {} accounts, Balanced: {}", lines.size(), isBalanced);
+
+        return TrialBalanceReportDetailed.builder()
+                .companyName(company.getLegalName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .generatedAt(LocalDate.now())
+                .lines(lines)
+                .totalOpeningBalance(totalOpeningBalance.setScale(2, RoundingMode.HALF_UP))
+                .totalPeriodDebit(totalPeriodDebit.setScale(2, RoundingMode.HALF_UP))
+                .totalPeriodCredit(totalPeriodCredit.setScale(2, RoundingMode.HALF_UP))
+                .totalNetMovement(totalNetMovement.setScale(2, RoundingMode.HALF_UP))
+                .totalClosingBalance(totalClosingBalance.setScale(2, RoundingMode.HALF_UP))
+                .isBalanced(isBalanced)
+                .summaryByClass(summaryByClass)
+                .build();
+    }
+
+
+    /**
+     * Helper method to get display name for account class.
+     */
+    private String getAccountClassDisplay(AccountClass accountClass) {
+        return switch (accountClass) {
+            case ASSET -> "1 - Assets";
+            case LIABILITY -> "2 - Liabilities";
+            case EQUITY -> "3 - Equity";
+            case REVENUE -> "4 - Revenue";
+            case EXPENSE -> "5 - Expenses";
+            case COST -> "6/7 - Costs";
+        };
     }
 
     /**
@@ -473,7 +663,7 @@ public class JournalEntryService {
             case '1' -> "1 - Assets";
             case '2' -> "2 - Liabilities";
             case '3' -> "3 - Equity";
-            case '4' -> "4 - Income";
+            case '4' -> "4 - Revenue";
             case '5' -> "5 - Expenses";
             case '6', '7' -> "6/7 - Costs";
             default -> "Other";
