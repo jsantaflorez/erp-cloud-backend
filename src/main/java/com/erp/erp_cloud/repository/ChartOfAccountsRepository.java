@@ -177,6 +177,45 @@ public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts
             @Param("startDate") LocalDate startDate
     );
 
+
+    /**
+     * Gets opening balances for a range of accounts as of a specific date. (For Auxiliary)
+     * * Logic:
+     * 1. Sums all Debits and Credits before the :startDate.
+     * 2. Applies the 'Nature' rule (D: Debit - Credit | C: Credit - Debit).
+     * 3. Filters by Company (Multi-tenancy).
+     * 4. Filters by Account Range (Performance optimization).
+     */
+    @Query("""
+    SELECT 
+        a.code,
+        /* CALCULATION: 
+           If Nature is 'D' (Assets/Expenses), balance = Debits - Credits.
+           If Nature is 'C' (Liabilities/Income), balance = Credits - Debits.
+        */
+        CASE 
+            WHEN a.nature = 'D' THEN COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
+            ELSE COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
+        END as openingBalance
+    FROM JournalEntryItem i
+    JOIN i.account a
+    JOIN i.journalEntry je
+    WHERE a.company = :company         /* Ensure data isolation between clients */
+      AND je.entryDate < :startDate    /* All history before the report period */
+      AND a.code BETWEEN :startAccount AND :endAccount /* Range for the Aux Ledger */
+      AND a.postingAccount = true      /* Only Detail/Movement accounts */
+      AND a.active = true              /* Exclude deleted/disabled accounts */
+    GROUP BY a.code, a.nature
+    ORDER BY a.code ASC                /* Professional sorting for the report */
+""")
+    List<Object[]> getOpeningBalancesForAuxiliary(
+            @Param("company") Company company,
+            @Param("startDate") LocalDate startDate,
+            @Param("startAccount") String startAccount,
+            @Param("endAccount") String endAccount
+    );
+
+
     /**
      * Gets period activity (debits and credits) within a date range.
      * Returns ALL posting accounts that had activity during the period.
@@ -207,5 +246,103 @@ public interface ChartOfAccountsRepository extends JpaRepository<ChartOfAccounts
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+// ═══════════════════════════════════════════════════════════
+    // INCOME STATEMENT QUERIES
+    // ═══════════════════════════════════════════════════════════
 
+    /**
+     * Gets all accounts for a specific account class for Income Statement generation.
+     *
+     * Returns accounts with their period balances (activity within the date range).
+     * Only includes Income Statement accounts (closesAtYearEnd = true).
+     * Only includes posting accounts with activity during the period.
+     *
+     * Account Classes for Income Statement:
+     * - REVENUE (Class 4): Credit balances (shown as positive revenue)
+     * - EXPENSE (Class 5): Debit balances (shown as positive expenses)
+     * - COST (Class 6, 7): Debit balances (shown as positive costs)
+     *
+     * Returns: [code, name, accountCategory, displayOrder, periodBalance]
+     *
+     * Period Balance Calculation:
+     * - For Revenue (Credit accounts): Total Credits - Total Debits
+     * - For Expenses/Costs (Debit accounts): Total Debits - Total Credits
+     */
+    @Query("""
+        SELECT 
+            a.code,
+            a.name,
+            a.accountCategory,
+            a.displayOrder,
+            CASE 
+                WHEN a.nature = 'D' THEN 
+                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
+                ELSE 
+                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
+            END as periodBalance
+        FROM JournalEntryItem i
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE a.company = :company
+          AND a.accountClass = :accountClass
+          AND a.financialStatement = 'INCOME_STATEMENT'
+          AND a.closesAtYearEnd = true
+          AND a.postingAccount = true
+          AND a.active = true
+          AND je.entryDate >= :startDate
+          AND je.entryDate <= :endDate
+        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder, a.nature
+        HAVING CASE 
+                WHEN a.nature = 'D' THEN 
+                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
+                ELSE 
+                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
+               END <> 0
+        ORDER BY a.displayOrder, a.code
+    """)
+    List<Object[]> getAccountsForIncomeStatement(
+            @Param("company") Company company,
+            @Param("accountClass") AccountClass accountClass,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    /**
+     * Alternative simplified query if the above HAVING clause causes issues.
+     * This version filters zero balances in the service layer instead of SQL.
+     */
+    @Query("""
+        SELECT 
+            a.code,
+            a.name,
+            a.accountCategory,
+            a.displayOrder,
+            CASE 
+                WHEN a.nature = 'D' THEN 
+                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
+                ELSE 
+                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
+            END as periodBalance
+        FROM JournalEntryItem i
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE a.company = :company
+          AND a.accountClass = :accountClass
+          AND a.financialStatement = 'INCOME_STATEMENT'
+          AND a.closesAtYearEnd = true
+          AND a.postingAccount = true
+          AND a.active = true
+          AND je.entryDate >= :startDate
+          AND je.entryDate <= :endDate
+        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder, a.nature
+        ORDER BY a.displayOrder, a.code
+    """)
+    List<Object[]> getAccountsForIncomeStatementSimple(
+            @Param("company") Company company,
+            @Param("accountClass") AccountClass accountClass,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
 }
+
+

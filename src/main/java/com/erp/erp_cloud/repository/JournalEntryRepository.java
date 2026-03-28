@@ -2,6 +2,7 @@ package com.erp.erp_cloud.repository;
 
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.JournalEntry;
+import com.erp.erp_cloud.entity.JournalEntryItem;
 import com.erp.erp_cloud.entity.ThirdParty;
 import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -72,4 +73,30 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("asOfDate") LocalDate asOfDate
     );
 
+
+
+
+    // Inside JournalEntryRepository.java
+
+    /**
+     * Gets all transaction items for a range of accounts and dates.
+     * Used to populate the Auxiliary Ledger rows.
+     */
+    @Query("""
+    SELECT i FROM JournalEntry e 
+    JOIN e.items i 
+    JOIN i.account a 
+    WHERE e.company = :company 
+      AND e.entryDate BETWEEN :startDate AND :endDate 
+      AND a.code BETWEEN :startCode AND :endCode 
+      AND a.postingAccount = true 
+    ORDER BY a.code ASC, e.entryDate ASC, e.id ASC
+""")
+    List<JournalEntryItem> findItemsForAuxiliary(
+            @Param("company") Company company,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode
+    );
 }

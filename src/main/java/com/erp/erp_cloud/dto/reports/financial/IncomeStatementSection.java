@@ -1,6 +1,5 @@
 package com.erp.erp_cloud.dto.reports.financial;
 
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -10,13 +9,13 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * Represents a section/category within the Balance Sheet.
+ * Represents a section/category within the Income Statement.
  *
  * Examples:
- * - Current Assets
- * - Fixed Assets
- * - Current Liabilities
- * - Equity
+ * - Operating Revenue
+ * - Cost of Goods Sold
+ * - Administrative Expenses
+ * - Tax Expenses
  *
  * Each section contains multiple account lines and a subtotal.
  */
@@ -24,17 +23,17 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class BalanceSheetSection implements FinancialSection{
+public class IncomeStatementSection implements FinancialSection {
 
     /**
      * Section name in English.
-     * Example: "Current Assets", "Fixed Assets"
+     * Example: "Operating Revenue", "Administrative Expenses"
      */
     private String sectionName;
 
     /**
      * Section name in Spanish.
-     * Example: "Activos Corrientes", "Activos Fijos"
+     * Example: "Ingresos Operacionales", "Gastos Administrativos"
      */
     private String sectionNameEs;
 
@@ -50,21 +49,11 @@ public class BalanceSheetSection implements FinancialSection{
      */
     private BigDecimal sectionTotal;
 
-
     /**
      * Display order for sorting sections.
      * Lower numbers appear first in the report.
      */
-
     private Integer displayOrder;
-    // ═══════════════════════════════════════════════════════════
-    // INTERFACE IMPLEMENTATION
-    // ═══════════════════════════════════════════════════════════
-
-    // getSectionTotal() - Already defined by Lombok @Data
-    // getDisplayOrder() - Already defined by Lombok @Data
-    // getSectionName() - Already defined by Lombok @Data
-    // getSectionNameEs() - Already defined by Lombok @Data
 
     // ═══════════════════════════════════════════════════════════
     // NESTED CLASS: Individual Account Line
@@ -74,8 +63,8 @@ public class BalanceSheetSection implements FinancialSection{
      * Represents a single account line within a section.
      *
      * Example:
-     * - Account: 110505 - Caja General
-     * - Balance: $50,000.00
+     * - Account: 410505 - Ingresos por Ventas
+     * - Amount: $1,000,000.00
      */
     @Data
     @Builder
@@ -84,35 +73,42 @@ public class BalanceSheetSection implements FinancialSection{
     public static class AccountLine {
 
         /**
-         * Account code (e.g., "110505")
+         * Account code (e.g., "410505")
          */
         private String accountCode;
 
         /**
-         * Account name (e.g., "Caja General")
+         * Account name (e.g., "Ingresos por Ventas")
          */
         private String accountName;
 
         /**
-         * Account balance as of the report date.
-         * Always positive (absolute value).
+         * Account balance for the period.
+         *
+         * For Revenue: Credit balance (shown as positive)
+         * For Costs: Debit balance (shown as positive)
+         * For Expenses: Debit balance (shown as positive)
          */
-        private BigDecimal balance;
+        private BigDecimal amount;
 
         /**
          * Returns formatted account description.
-         * Example: "110505 - Caja General"
+         * Example: "410505 - Ingresos por Ventas"
          */
         public String getFullDescription() {
             return accountCode + " - " + accountName;
         }
 
         /**
-         * Returns formatted balance with currency.
-         * Example: "$50,000.00"
+         * Returns formatted amount with currency.
+         * Example: "$1,000,000.00"
          */
-        public String getFormattedBalance() {
-            return String.format("$%,.2f", balance);
+        public String getFormattedAmount() {
+            if (amount == null) return "$0.00";
+            if (amount.compareTo(BigDecimal.ZERO) < 0) {
+                return String.format("($%,.2f)", amount.abs());
+            }
+            return String.format("$%,.2f", amount);
         }
     }
 
@@ -129,10 +125,14 @@ public class BalanceSheetSection implements FinancialSection{
 
     /**
      * Returns formatted section total with currency.
-     * Example: "$250,000.00"
+     * Example: "$1,200,000.00"
      */
     public String getFormattedSectionTotal() {
-        return String.format("$%,.2f", sectionTotal != null ? sectionTotal : BigDecimal.ZERO);
+        if (sectionTotal == null) return "$0.00";
+        if (sectionTotal.compareTo(BigDecimal.ZERO) < 0) {
+            return String.format("($%,.2f)", sectionTotal.abs());
+        }
+        return String.format("$%,.2f", sectionTotal);
     }
 
     /**
@@ -146,35 +146,44 @@ public class BalanceSheetSection implements FinancialSection{
 //
 //        ---
 //
-//        ## **🎯 DTO Structure Visualization**
+//        ## **📋 DTO Structure Visualization**
 //        ```
-//BalanceSheetReport
+//IncomeStatementReport
 //├── companyName: "ABC Company"
-//        ├── asOfDate: 2026-12-31
-//        ├── isBalanced: true
+//        ├── startDate: 2026-01-01
+//        ├── endDate: 2026-12-31
 //        │
-//        ├── assetSections: [
-//        │   ├── BalanceSheetSection
-//│   │   ├── sectionName: "Current Assets"
-//        │   │   ├── sectionTotal: $250,000.00
-//        │   │   └── accountLines: [
-//        │   │       ├── AccountLine { code: "110505", name: "Caja General", balance: $50,000 }
-//│   │       ├── AccountLine { code: "111005", name: "Bancos", balance: $100,000 }
-//│   │       └── AccountLine { code: "130505", name: "Clientes", balance: $100,000 }
+//        ├── revenueSections: [
+//        │   ├── IncomeStatementSection {
+//│   │   ├── sectionName: "Operating Revenue"
+//│   │   ├── sectionTotal: $1,200,000
+//│   │   └── accountLines: [
+//│   │       ├── AccountLine { code: "410505", name: "Ventas", amount: $1,000,000 }
+//│   │       └── AccountLine { code: "420505", name: "Servicios", amount: $200,000 }
 //│   │       ]
-//        │   │
-//        │   └── BalanceSheetSection
-//│       ├── sectionName: "Fixed Assets"
-//        │       ├── sectionTotal: $400,000.00
-//        │       └── accountLines: [...]
-//        │   ]
+//│   │   }
+//│   └── IncomeStatementSection {
+//│       ├── sectionName: "Non-Operating Revenue"
+//│       ├── sectionTotal: $60,000
+//│       └── accountLines: [...]
+//│       }
+//│   ]
 //        │
-//        ├── totalAssets: $650,000.00
+//        ├── totalRevenue: $1,260,000
 //        │
-//        ├── liabilitySections: [...]
-//        ├── totalLiabilities: $275,000.00
+//        ├── costSections: [...]
+//        ├── totalCosts: $500,000
+//        ├── grossProfit: $760,000
 //        │
-//        ├── equitySections: [...]
-//        ├── totalEquity: $375,000.00
+//        ├── operatingExpenseSections: [...]
+//        ├── totalOperatingExpenses: $470,000
+//        ├── operatingIncome: $290,000
 //        │
-//        └── totalLiabilitiesAndEquity: $650,000.00
+//        ├── taxExpenseSections: [...]
+//        ├── totalTaxExpenses: $62,500
+//        │
+//        ├── netIncome: $187,500
+//        │
+//        ├── grossProfitMargin: 60.3
+//        ├── operatingMargin: 23.0
+//        └── netProfitMargin: 14.9

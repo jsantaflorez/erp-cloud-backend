@@ -1,10 +1,9 @@
 package com.erp.erp_cloud.controller;
 
 import com.erp.erp_cloud.dto.ApiResponse;
-import com.erp.erp_cloud.dto.reports.financial.BalanceSheetReport;
-import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
-import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReportDetailed;
-import com.erp.erp_cloud.service.FinancialStatementService;
+import com.erp.erp_cloud.dto.reports.financial.*;
+import com.erp.erp_cloud.service.reports.financial.AuxiliaryLedgerService;
+import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -20,6 +19,7 @@ public class ReportController {
 
     private final JournalEntryService journalEntryService;
     private final FinancialStatementService financialStatementService;
+    private final AuxiliaryLedgerService auxiliaryLedgerService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -118,80 +118,61 @@ public class ReportController {
                 startDate, endDate);
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
- //       Example JSON Response
-//        {
-//            "message": "Detailed Trial Balance generated successfully for 2026-01-01 to 2026-12-31 and is balanced.",
-//                "success": true,
-//                "data": {
-//            "companyName": "ABC Company",
-//                    "startDate": "2026-01-01",
-//                    "endDate": "2026-12-31",
-//                    "generatedAt": "2026-03-16",
-//                    "lines": [
-//            {
-//                "accountCode": "110505",
-//                    "accountName": "Caja General",
-//                    "accountClass": "1 - Assets",
-//                    "isBalanceSheetAccount": true,
-//                    "openingBalance": 100000.00,
-//                    "periodDebit": 500000.00,
-//                    "periodCredit": 300000.00,
-//                    "netMovement": 200000.00,
-//                    "closingBalance": 300000.00
-//            },
-//            {
-//                "accountCode": "410505",
-//                    "accountName": "Ingresos por Ventas",
-//                    "accountClass": "4 - Revenue",
-//                    "isBalanceSheetAccount": false,
-//                    "openingBalance": 0.00,
-//                    "periodDebit": 0.00,
-//                    "periodCredit": 1000000.00,
-//                    "netMovement": -1000000.00,
-//                    "closingBalance": -1000000.00
-//            },
-//            {
-//                "accountCode": "510506",
-//                    "accountName": "Gastos Administrativos",
-//                    "accountClass": "5 - Expenses",
-//                    "isBalanceSheetAccount": false,
-//                    "openingBalance": 0.00,
-//                    "periodDebit": 300000.00,
-//                    "periodCredit": 0.00,
-//                    "netMovement": 300000.00,
-//                    "closingBalance": 300000.00
-//            }
-//    ],
-//            "totalOpeningBalance": 100000.00,
-//                    "totalPeriodDebit": 2000000.00,
-//                    "totalPeriodCredit": 2000000.00,
-//                    "totalNetMovement": 0.00,
-//                    "totalClosingBalance": -400000.00,
-//                    "isBalanced": true,
-//                    "summaryByClass": {
-//                "1 - Assets": 300000.00,
-//                        "4 - Revenue": -1000000.00,
-//                        "5 - Expenses": 300000.00
-//            }
-//        }
-//        }
-//```
-//
-//        ---
-//
-//## **✅ What You Now Have**
-//
-//### **Report 1: Simple Trial Balance** (existing)
-//```
-//        GET /api/reports/trial-balance?asOfDate=2026-12-31
-//```
-//        - Shows cumulative totals up to a date
-//        - Quick balance verification
-//        - Good for "snapshot" view
-//
-//### **Report 2: Detailed Trial Balance** (new)
-//```
-//        GET /api/reports/trial-balance-detailed?startDate=2026-01-01&endDate=2026-12-31
-//
    }
+
+    /**
+     * Generates Auxiliary Ledger Report (Libro Auxiliar por Cuenta).
+     *
+     * Shows detailed transaction history for a range of accounts with:
+     * - Opening balance
+     * - Transaction details
+     * - Running balance
+     *
+     * @param startDate Start of period (required)
+     * @param endDate End of period (required)
+     * @param startCode First account code (optional, default: "1")
+     * @param endCode Last account code (optional, default: "9999999999")
+     * @return Auxiliary ledger report
+     *
+     * Examples:
+     * - Single account: startCode="110505", endCode="110505"
+     * - All cash accounts: startCode="11", endCode="119999"
+     * - All accounts: startCode="1", endCode="9999999999"
+     */
+    @GetMapping("/auxiliary-ledger")
+    public ResponseEntity<ApiResponse<AuxiliaryLedgerReport>> getAuxiliaryLedger(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate,
+
+            @RequestParam(required = false, defaultValue = "1")
+            String startCode,
+
+            @RequestParam(required = false, defaultValue = "9999999999")
+            String endCode) {
+
+        AuxiliaryLedgerReport data = auxiliaryLedgerService.getAuxiliaryLedgerReport(
+                startDate, endDate, startCode, endCode
+        );
+
+        int accountCount = data.getAccountGroups() != null ? data.getAccountGroups().size() : 0;
+        int transactionCount = data.getAccountGroups() != null
+                ? data.getAccountGroups().stream()
+                .mapToInt(AuxiliaryAccountGroup::getTotalRecords)
+                .sum()
+                : 0;
+
+        String message = String.format(
+                "Auxiliary Ledger generated successfully from %s to %s. " +
+                        "%d account(s), %d transaction(s).",
+                startDate, endDate, accountCount, transactionCount
+        );
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
 }
