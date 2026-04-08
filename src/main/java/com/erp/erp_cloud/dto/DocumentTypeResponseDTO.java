@@ -30,6 +30,7 @@ public class DocumentTypeResponseDTO {
      * The last number used (to show the user what comes next)
      */
     private Long currentConsecutive;
+    private String legalResolution;
 
     /**
      * Flag to indicate if it affects the General Ledger

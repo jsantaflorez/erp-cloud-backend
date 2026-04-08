@@ -139,6 +139,87 @@ public class JournalEntryService {
     }
 
     /**
+     * Creates a manual accounting voucher with strict validation rules.
+     * Unlike automated entries, manual vouchers do not allow system auto-balancing
+     * or hidden tax calculations, ensuring full control for the accountant.
+     *
+     * @param request The journal entry data from the user
+     * @return DTO representation of the saved manual voucher
+     * @throws InvalidOperationException if the entry is unbalanced or the period is closed
+     */
+    @Transactional
+    public JournalEntryResponseDTO createManualVoucher(JournalEntryRequest request) {
+        Company currentCompany = companyContext.getCurrentCompany();
+        log.info("Processing manual voucher for company: {}", currentCompany.getLegalName());
+
+        // 1. Validate that the accounting period is OPEN (Year/Month logic)
+        accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
+
+        // 2. Strict Balance Validation (Zero tolerance for manual entries)
+        // We calculate totals manually to ensure they match perfectly before processing
+        BigDecimal totalDebit = request.getItems().stream()
+                .map(i -> i.getDebit() != null ? i.getDebit() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalCredit = request.getItems().stream()
+                .map(i -> i.getCredit() != null ? i.getCredit() : BigDecimal.ZERO)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        if (totalDebit.compareTo(totalCredit) != 0) {
+            throw new InvalidOperationException(String.format(
+                    "Manual voucher is unbalanced. Debits: %s, Credits: %s. Difference: %s",
+                    totalDebit, totalCredit, totalDebit.subtract(totalCredit)));
+        }
+
+        // 3. Document Type setup and validation
+        DocumentType docType = docTypeService.findById(request.getDocumentTypeId());
+        if (!docType.getCompany().getId().equals(currentCompany.getId())) {
+            throw new InvalidOperationException("Unauthorized Document Type for this company.");
+        }
+
+        // 4. Initialize the Journal Entry entity
+        JournalEntry entry = new JournalEntry();
+        entry.setDocumentType(docType);
+        entry.setEntryDate(request.getEntryDate());
+        entry.setDescription(request.getDescription());
+        entry.setCompany(currentCompany);
+
+        // 5. Assign consecutive number using a pessimistic lock to avoid collisions
+        Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
+        entry.setConsecutive(nextNumber);
+        entry.setDocumentNumber(generateDocNumber(docType, nextNumber));
+
+        // 6. Map and validate each line item
+        for (int i = 0; i < request.getItems().size(); i++) {
+            var itemDto = request.getItems().get(i);
+
+            // Ensure the account is active and is a "Posting Account" (Level 4+)
+            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), currentCompany);
+
+            JournalEntryItem item = new JournalEntryItem();
+            item.setAccount(account);
+
+            // Scale to 2 decimal places for financial precision
+            item.setDebit(itemDto.getDebit().setScale(2, RoundingMode.HALF_UP));
+            item.setCredit(itemDto.getCredit().setScale(2, RoundingMode.HALF_UP));
+            item.setDescription(itemDto.getDescription());
+
+            // Attach Third Party or Cost Center if the account configuration requires it
+            handleThirdParty(item, itemDto, account, currentCompany);
+            handleCostCenter(item, itemDto, account, currentCompany);
+
+            entry.addItem(item);
+        }
+
+        // 7. Save to database and return the mapped response
+        // Note: We skip 'applySystemAdjustments' to maintain manual integrity
+        log.debug("Saving manual voucher: {}", entry.getDocumentNumber());
+        return mapToResponseDTO(repository.save(entry));
+    }
+
+
+
+    /**
      * Logic to calculate taxes and close the accounting gap.
      */
     private void applySystemAdjustments(JournalEntry entry, Company company) {
@@ -424,6 +505,23 @@ public class JournalEntryService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Journal entry with document number '" + docNum + "' not found"
                 ));
+    }
+
+    /**
+     * Finds a specific journal entry by its internal ID.
+     * Validates that the entry belongs to the current user's company.
+     *
+     * @param id The database primary key
+     * @return Mapped Response DTO
+     * @throws ResourceNotFoundException if not found or belongs to another company
+     */
+    public JournalEntryResponseDTO findById(Long id) {
+        Company company = companyContext.getCurrentCompany();
+
+        return repository.findById(id)
+                .filter(entry -> entry.getCompany().getId().equals(company.getId()))
+                .map(this::mapToResponseDTO)
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
     }
 
     /**

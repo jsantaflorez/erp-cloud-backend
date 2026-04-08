@@ -12,6 +12,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+//@CrossOrigin(
+//        origins = "*",
+//        allowedHeaders = "*",
+//        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE, RequestMethod.OPTIONS}
+//)
 @RestController
 @RequestMapping("/api/v1/document-types")
 @RequiredArgsConstructor

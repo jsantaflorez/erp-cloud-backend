@@ -214,6 +214,7 @@ public class DocumentTypeService {
         dto.setName(entity.getName());
         dto.setPrefix(entity.getPrefix());
         dto.setCurrentConsecutive(entity.getCurrentConsecutive());
+        dto.setLegalResolution(entity.getLegalResolution());
         dto.setAccounting(entity.isAccounting());
         dto.setActive(entity.isActive());
 

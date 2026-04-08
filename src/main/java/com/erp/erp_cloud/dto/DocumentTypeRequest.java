@@ -2,6 +2,7 @@ package com.erp.erp_cloud.dto;
 
 
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -23,6 +24,9 @@ public class DocumentTypeRequest {
 
     @NotNull(message = "Must specify if this document affects accounting")
     private Boolean isAccounting;
+
+    @Min(value = 0, message = "Consecutive cannot be negative")
+    private Long currentConsecutive;
 
     @Size(max = 255, message = "Legal resolution details are too long")
     private String legalResolution;
