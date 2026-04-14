@@ -5,6 +5,8 @@ import com.erp.erp_cloud.dto.reports.financial.*;
 import com.erp.erp_cloud.service.reports.financial.AuxiliaryLedgerService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.JournalEntryService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -13,8 +15,9 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 
 @RestController
-@RequestMapping("/api/reports")
+@RequestMapping("/api/v1/reports")
 @RequiredArgsConstructor
+@Tag(name = "Financial Reports", description = "Endpoints for generating accounting books and financial statements (Balance Sheet, Trial Balance, etc.)")
 public class ReportController {
 
     private final JournalEntryService journalEntryService;
@@ -36,6 +39,8 @@ public class ReportController {
      * - GET /api/reports/trial-balance?asOfDate=2026-12-31
      */
     @GetMapping("/trial-balance")
+    @Operation(summary = "Generate Trial Balance", description = "Generates the 'Balance de Comprobación' showing current balances for all accounts as of a specific date.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Trial balance generated successfully")
     public ResponseEntity<ApiResponse<TrialBalanceReport>> getTrialBalance(
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
@@ -69,6 +74,8 @@ public class ReportController {
      * - GET /api/reports/balance-sheet?asOfDate=2026-12-31
      */
     @GetMapping("/balance-sheet")
+    @Operation(summary = "Generate Balance Sheet", description = "Generates the 'Estado de Situación Financiera' (Assets, Liabilities, and Equity) as of a specific date.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Balance Sheet generated successfully")
     public ResponseEntity<ApiResponse<BalanceSheetReport>> getBalanceSheet(
             @RequestParam
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
@@ -100,6 +107,8 @@ public class ReportController {
      * - GET /api/reports/trial-balance-detailed?startDate=2026-01-01&endDate=2026-12-31
      */
     @GetMapping("/trial-balance-detailed")
+    @Operation(summary = "Generate Detailed Trial Balance", description = "Shows opening balances, period movements (debits/credits), and closing balances for a date range.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Detailed report generated successfully")
     public ResponseEntity<ApiResponse<TrialBalanceReportDetailed>> getTrialBalanceDetailed(
             @RequestParam
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
@@ -140,6 +149,8 @@ public class ReportController {
      * - All accounts: startCode="1", endCode="9999999999"
      */
     @GetMapping("/auxiliary-ledger")
+    @Operation(summary = "Generate Auxiliary Ledger", description = "Retrieves the 'Libro Auxiliar' showing detailed transaction history and running balances for a range of accounts.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Auxiliary Ledger generated successfully")
     public ResponseEntity<ApiResponse<AuxiliaryLedgerReport>> getAuxiliaryLedger(
             @RequestParam
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)

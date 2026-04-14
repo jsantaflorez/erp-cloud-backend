@@ -7,6 +7,8 @@ import com.erp.erp_cloud.dto.ChartOfAccountResponseDTO;
 
 import com.erp.erp_cloud.service.ChartOfAccountService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,8 +22,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/chart-of-accounts")
+@RequestMapping("/api/v1/chart-of-accounts")
 @RequiredArgsConstructor
+@Tag(name = "Chart of Accounts", description = "Endpoints for managing the Accounting Plan (PUC) and account hierarchy")
 public class ChartOfAccountController {
 
     private final ChartOfAccountService chartOfAccountService;
@@ -33,6 +36,9 @@ public class ChartOfAccountController {
 
 
     @PostMapping
+    @Operation(summary = "Create a new accounting account", description = "Registers a new account in the chart of accounts for the current tenant.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "217", description = "Account created successfully")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid input data or duplicate account code")
     public ResponseEntity<ApiResponse<ChartOfAccountResponseDTO>> create(@Valid @RequestBody ChartOfAccountRequest request) {
         ChartOfAccountResponseDTO created = chartOfAccountService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -44,6 +50,8 @@ public class ChartOfAccountController {
      * This replaces the old getAll and search by text.
      */
     @GetMapping
+    @Operation(summary = "List/Search accounts with pagination", description = "Retrieves a paginated list of accounts. Can be filtered by a search string (code or name).")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Data retrieved successfully")
     public ResponseEntity<ApiResponse<Page<ChartOfAccountResponseDTO>>> list(
             @RequestParam(required = false) String search,
             @PageableDefault(size = 20, sort = "code") Pageable pageable) {
@@ -55,6 +63,9 @@ public class ChartOfAccountController {
      * Get account by internal ID.
      */
     @GetMapping("/{id}")
+    @Operation(summary = "Get account by ID", description = "Retrieves detailed information of a specific account using its internal database ID.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account found")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Account not found")
     public ResponseEntity<ApiResponse<ChartOfAccountResponseDTO>> getById(@PathVariable Long id) {
         return ResponseEntity.ok(new ApiResponse<>("Account found", true, chartOfAccountService.findById(id)));
     }
@@ -63,6 +74,9 @@ public class ChartOfAccountController {
      */
 
     @GetMapping("/code/{code}")
+    @Operation(summary = "Get account by accounting code", description = "Retrieves an account using its official accounting code (e.g., '110505').")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account found")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Account not found")
     public ResponseEntity<ApiResponse<ChartOfAccountResponseDTO>> getByCode(@PathVariable String code) {
         ChartOfAccountResponseDTO data = chartOfAccountService.findByCode(code);
         return ResponseEntity.ok(new ApiResponse<>("Account found", true, data));
@@ -73,6 +87,8 @@ public class ChartOfAccountController {
      * Kept as List for tree-view purposes.
      */
     @GetMapping("/roots")
+    @Operation(summary = "Get top-level accounts", description = "Retrieves all accounts at Level 1 (Assets, Liabilities, etc.) for tree-view purposes.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Roots retrieved successfully")
     public ResponseEntity<ApiResponse<List<ChartOfAccountResponseDTO>>> getRoots() {
         List<ChartOfAccountResponseDTO> data = chartOfAccountService.listRoots();
         return ResponseEntity.ok(new ApiResponse<>("Roots retrieved successfully", true, data));
@@ -84,6 +100,8 @@ public class ChartOfAccountController {
      */
 
     @GetMapping("/{parentId}/children")
+    @Operation(summary = "Get children of a parent account", description = "Retrieves all direct sub-accounts for a given parent account ID.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Children retrieved successfully")
     public ResponseEntity<ApiResponse<List<ChartOfAccountResponseDTO>>> getChildren(@PathVariable Long parentId) {
         List<ChartOfAccountResponseDTO> data = chartOfAccountService.listChildren(parentId);
         return ResponseEntity.ok(new ApiResponse<>("Children retrieved successfully", true, data));
@@ -94,6 +112,8 @@ public class ChartOfAccountController {
      * Get active accounts allowed for journal entries (posting accounts).
      */
     @GetMapping("/posting")
+    @Operation(summary = "Get auxiliary/posting accounts", description = "Retrieves accounts that allow direct journal entries (typically the lowest level in the hierarchy).")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Posting Accounts retrieved successfully")
     public ResponseEntity<ApiResponse<Page<ChartOfAccountResponseDTO>>> getPostingAccounts(
             @PageableDefault(size = 20, sort = "code") Pageable pageable) {
         Page<ChartOfAccountResponseDTO> data = chartOfAccountService.listPostingAccounts(pageable);
@@ -105,6 +125,8 @@ public class ChartOfAccountController {
      */
 
     @GetMapping("/level/{level}")
+    @Operation(summary = "Filter accounts by depth level", description = "Retrieves accounts filtered by their hierarchy level (1 for Class, 2 for Group, etc.).")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Accounts by level retrieved successfully")
     public ResponseEntity<ApiResponse<Page<ChartOfAccountResponseDTO>>> getByLevel(
             @PathVariable Byte level,
             @PageableDefault(size = 20, sort = "code") Pageable pageable) {
@@ -120,6 +142,9 @@ public class ChartOfAccountController {
      */
 
     @PutMapping("/{id}")
+    @Operation(summary = "Update an account", description = "Updates the description or properties of an existing account.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account updated successfully")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Account not found")
     public ResponseEntity<ApiResponse<ChartOfAccountResponseDTO>> update(
             @PathVariable Long id,
             @Valid @RequestBody ChartOfAccountRequest request) {
@@ -142,6 +167,8 @@ public class ChartOfAccountController {
 
 
     @DeleteMapping("/{id}/deactivate")
+    @Operation(summary = "Deactivate account", description = "Performs a logical delete by setting the account as inactive.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account deactivated successfully")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         chartOfAccountService.deactivate(id);
         return ResponseEntity.ok(new ApiResponse<>("Account deactivated successfully", true, null));
@@ -154,6 +181,8 @@ public class ChartOfAccountController {
 
 
     @PatchMapping("/{id}/activate")
+    @Operation(summary = "Activate account", description = "Restores a previously deactivated account to active status.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account activated successfully")
     public ResponseEntity<ApiResponse<Void>> activate(@PathVariable Long id) {
         chartOfAccountService.activate(id);
         return ResponseEntity.ok(new ApiResponse<>("Account activated successfully", true, null));
