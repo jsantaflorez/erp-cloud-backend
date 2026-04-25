@@ -8,6 +8,10 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * Entity representing the Chart of Accounts (PUC).
+ * Maintains a hierarchical structure for accounting purposes.
+ */
 @Entity
 @Table(
         name = "accounting_periods",

@@ -5,6 +5,7 @@ import com.erp.erp_cloud.dto.*;
 import com.erp.erp_cloud.service.CostCenterService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -82,7 +83,7 @@ public class CostCenterController {
     @Operation(summary = "Create a new cost center", description = "Registers a new cost center in the system hierarchy.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Cost center created successfully")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid input data")
-    public ResponseEntity<ApiResponse<CostCenterResponseDTO>> create(@RequestBody CostCenterRequest request) {
+    public ResponseEntity<ApiResponse<CostCenterResponseDTO>> create(@Valid @RequestBody CostCenterRequest request) {
         CostCenterResponseDTO created = costCenterService.create(request);
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -98,7 +99,7 @@ public class CostCenterController {
     @Operation(summary = "Update an existing cost center", description = "Updates properties of an existing cost center.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Cost center updated successfully")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Cost center not found")
-    public ResponseEntity<ApiResponse<CostCenterResponseDTO>> update(@PathVariable Long id, @RequestBody CostCenterRequest request) {
+    public ResponseEntity<ApiResponse<CostCenterResponseDTO>> update(@PathVariable Long id,@Valid @RequestBody CostCenterRequest request) {
         CostCenterResponseDTO updated = costCenterService.update(id, request);
         return ResponseEntity.ok(new ApiResponse<>("Cost center updated successfully", true, updated));
     }

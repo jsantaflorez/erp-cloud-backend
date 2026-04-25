@@ -32,7 +32,7 @@ public class ThirdPartyController {
     @Operation(summary = "Create a new third party", description = "Registers a new entity (Customer, Vendor, or Employee) in the current tenant's database.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Third Party created successfully")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Invalid data or duplicate identification")
-    public ResponseEntity<ApiResponse<ThirdPartyResponseDTO>> create(@RequestBody ThirdPartyRequest request) {
+    public ResponseEntity<ApiResponse<ThirdPartyResponseDTO>> create(@Valid @RequestBody ThirdPartyRequest request) {
         ThirdPartyResponseDTO created = thirdPartyService.create(request);
         return ResponseEntity
                 .status(HttpStatus.CREATED)

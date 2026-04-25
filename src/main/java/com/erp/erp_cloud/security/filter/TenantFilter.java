@@ -48,10 +48,25 @@ public class TenantFilter extends OncePerRequestFilter {
 
         // 3. Strict validation for all other business endpoints
         if (tenantId == null || tenantId.isBlank()) {
-            response.sendError(
-                    HttpServletResponse.SC_BAD_REQUEST,
-                    "Missing X-Tenant-Id header"
-            );
+            // NOTE: Since the Filter runs before the GlobalExceptionHandler,
+            // we must manually construct and write the response to ensure
+            // consistency with our standardized ApiResponse format.
+
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.setContentType("application/json");
+            response.setCharacterEncoding("UTF-8");
+
+            // Manually build the JSON string to match the ApiResponse structure.
+            // This prevents the request from falling back to Spring's default error format.
+            String jsonResponse = "{" +
+                    "\"message\": \"Missing X-Tenant-Id header\"," +
+                    "\"success\": false," +
+                    "\"data\": null" +
+                    "}";
+
+            response.getWriter().write(jsonResponse);
+
+            // Terminate the filter chain execution immediately
             return;
         }
 

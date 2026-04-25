@@ -25,6 +25,7 @@ public class ThirdPartyRequest {
 
     private Integer verificationDigit;
 
+    @Size(max = 50, message = "FirstName field can store  up to 50 characters")
     private String firstName;
     private String middleName;
     @Size(max = 50, message = "LastName field can store  up to 100 characters")

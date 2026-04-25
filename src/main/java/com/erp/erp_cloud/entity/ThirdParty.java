@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Email;
 import lombok.Data;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import lombok.EqualsAndHashCode;
 
 import java.io.Serializable;
 import java.util.Optional;
@@ -35,10 +36,14 @@ import java.util.Optional;
 
 )
 @Data
-// 1. Evita el error de ByteBuddyInterceptor (Proxy de Hibernate)
+/* * IMPORTANT: Since we are using @Data with inheritance,
+ * we use this to include BaseEntity fields in equals/hashCode
+ */
+@EqualsAndHashCode(callSuper = true)
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
-public class ThirdParty implements Serializable {
 
+
+public class ThirdParty extends BaseEntity implements Serializable {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

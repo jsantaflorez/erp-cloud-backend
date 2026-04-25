@@ -74,6 +74,8 @@ public class CostCenterService {
         // Prevent setting allowsMovement to true if the center is inactive
         validateActiveStatus(request);
 
+
+
         CostCenterResponseDTO response = mapAndSave(request, costCenter);
 
         log.info("Cost center {} updated successfully", id);
@@ -182,22 +184,44 @@ public class CostCenterService {
     /**
      * Maps the DTO to the Entity and handles level/parent logic.
      */
-    private CostCenterResponseDTO mapAndSave(CostCenterRequest request, CostCenter costCenter) {
-        costCenter.setCode(request.getCode());
-        costCenter.setName(request.getName());
-        costCenter.setAllowsMovement(request.isAllowsMovement());
-        costCenter.setActive(request.isActive());
+     private CostCenterResponseDTO mapAndSave(CostCenterRequest request, CostCenter costCenter) {
 
+        // --- VALIDATION 1: Parent Hierarchy Rule ---
+        // A Cost Center marked as 'allowsMovement' (operational) cannot have sub-centers.
         if (request.getParentId() != null) {
             CostCenter parent = repository.findById(request.getParentId())
                     .orElseThrow(() -> new ResourceNotFoundException("CostCenter (parent)", request.getParentId()));
 
+            if (parent.isAllowsMovement()) {
+                log.warn("Hierarchy violation: Parent center {} is an operational node", parent.getId());
+                throw new InvalidOperationException(
+                        "Cannot add sub-center: The parent center is marked to allow movements."
+                );
+            }
             costCenter.setParent(parent);
             costCenter.setLevel(parent.getLevel() + 1);
         } else {
             costCenter.setParent(null);
             costCenter.setLevel(1);
         }
+
+        // --- VALIDATION 2: Downward Consistency Rule ---
+        // If an existing center is being updated to 'allowsMovement', it must not have children.
+         if (request.isAllowsMovement() && costCenter.getId() != null) {
+             // We use the primary key (ID) to verify if this center already has children
+             if (repository.existsByParentId(costCenter.getId())) {
+                 log.warn("Consistency violation: Center ID {} has children", costCenter.getId());
+                 throw new InvalidOperationException(
+                         "This center has sub-centers and cannot be marked to allow movements."
+                 );
+             }
+         }
+
+        // Map remaining fields from request to entity
+        costCenter.setCode(request.getCode());
+        costCenter.setName(request.getName());
+        costCenter.setAllowsMovement(request.isAllowsMovement());
+        costCenter.setActive(request.isActive());
 
         CostCenter saved = repository.save(costCenter);
         return mapToResponseDTO(saved);

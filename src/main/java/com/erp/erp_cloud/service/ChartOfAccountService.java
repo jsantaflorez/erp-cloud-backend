@@ -57,13 +57,8 @@ public class ChartOfAccountService {
                 throw new InvalidOperationException("Cannot add children to a posting account");
             }
 
-            // 2.2 BUSINESS RULE: Consistency check - Child must match parent's class
-            if (!parent.getAccountClass().equals(request.getAccountClass())) {
-                throw new InvalidOperationException(
-                        String.format("Account class mismatch. Expected: %s, Provided: %s",
-                                parent.getAccountClass(), request.getAccountClass())
-                );
-            }
+            // 2.2 BUSINESS RULE: All children must belong to the same Account Class as their parent.
+            validateHierarchyConsistency(parent, request);
 
             account.setParent(parent);
             account.setLevel((byte) (parent.getLevel() + 1));
@@ -141,11 +136,7 @@ public class ChartOfAccountService {
                 throw new InvalidOperationException("Parent cannot be a posting account");
             }
 
-            if (!parentToValidate.getAccountClass().equals(request.getAccountClass())) {
-                throw new InvalidOperationException(
-                        String.format("Account class mismatch. Expected: %s", parentToValidate.getAccountClass())
-                );
-            }
+            validateHierarchyConsistency(parentToValidate, request);
 
             existing.setParent(parentToValidate);
             existing.setLevel((byte) (parentToValidate.getLevel() + 1));
@@ -434,6 +425,30 @@ public class ChartOfAccountService {
             currentParent = currentParent.getParent();
         }
         return false;
+    }
+
+    /**
+     * Validates hierarchy consistency.
+     * All children must belong to the same Account Class as their parent.
+     * Nature (Debit/Credit) is NOT validated here to allow contra-accounts.
+     */
+    private void validateHierarchyConsistency(ChartOfAccounts parent, ChartOfAccountRequest request) {
+        if (parent == null) return;
+
+        // We compare strings to avoid Enum vs String mismatch issues
+        String parentClass = parent.getAccountClass().toString();
+        String childClass = request.getAccountClass().toString();
+
+        if (!parentClass.equals(childClass)) {
+            log.error("Hierarchy mismatch: Parent {} is {}, but requested child is {}",
+                    parent.getCode(), parentClass, childClass);
+
+            throw new InvalidOperationException(
+                    String.format("Account class mismatch. The parent account '%s' is %s. " +
+                                    "All sub-accounts must share the same class.",
+                            parent.getCode(), parentClass)
+            );
+        }
     }
 
     /**

@@ -1,5 +1,8 @@
 package com.erp.erp_cloud.entity;
 
+
+
+import com.erp.erp_cloud.entity.BaseEntity;
 import com.erp.erp_cloud.enums.AccountCategory;
 import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.enums.AccountNature;
@@ -8,7 +11,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,9 +39,9 @@ import java.util.List;
         }
 )
 @Data
+@EqualsAndHashCode(callSuper = true)
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
-public class ChartOfAccounts {
-
+public class ChartOfAccounts extends BaseEntity implements Serializable {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -249,7 +254,8 @@ public class ChartOfAccounts {
         boolean isValid = switch (accountClass) {
             case ASSET -> accountCategory.name().contains("ASSET") ||
                     accountCategory == AccountCategory.INVESTMENT;
-            case LIABILITY -> accountCategory.name().contains("LIABILITY");
+            case LIABILITY -> accountCategory.name().contains("LIABILITY") ||
+                    accountCategory == AccountCategory.TAXES_PAYABLE;
             case EQUITY -> accountCategory.name().contains("EQUITY") ||
                     accountCategory == AccountCategory.RETAINED_EARNINGS ||
                     accountCategory == AccountCategory.SHARE_CAPITAL ||
