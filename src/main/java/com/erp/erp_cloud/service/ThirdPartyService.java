@@ -191,15 +191,24 @@ public class ThirdPartyService {
     // =====================================================
     // UPDATE
     // =====================================================
-
-       public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
+    public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
         log.debug("Updating third party id: {}", id);
 
         ThirdParty existing = findEntityById(id);
 
-        // Check if document number is being changed
+        // --- IDENTIFICATION SHIELD WITH AUDIT LOG ---
         if (!existing.getDocumentNumber().equals(request.getDocumentNumber())) {
-            // Validate new document number doesn't exist for another third party
+
+            // 1. Check if the third party has accounting movements
+            if (journalEntryRepository.existsByThirdParty(existing)) {
+                // Since we don't have CurrentUser yet, we log the change with a SYSTEM label
+                // This ensures traceability in the server logs
+                log.error("AUDIT ALERT: NIT/Document changed for ThirdParty ID: {} from [{}] to [{}] " +
+                                "| Reason: Manual correction on record with existing accounting movements.",
+                        id, existing.getDocumentNumber(), request.getDocumentNumber());
+            }
+
+            // 2. Strict Rule: New document number must not belong to another existing third party
             if (thirdPartyRepository.existsByCompanyAndDocumentNumber(
                     existing.getCompany(), request.getDocumentNumber())) {
                 throw new DuplicateResourceException(
@@ -211,12 +220,10 @@ public class ThirdPartyService {
         mapRequestToEntity(request, existing);
 
         ThirdParty updated = thirdPartyRepository.save(existing);
-        log.info("Third party {} updated successfully with document: {}",
-                id, updated.getDocumentNumber());
+        log.info("Third party {} updated successfully", id);
 
         return mapToResponseDTO(updated);
     }
-
     /**
      * Soft Delete: Instead of removing from DB, we deactivate the record.
      */
@@ -262,17 +269,19 @@ public class ThirdPartyService {
 
         String cleanNit = nit.replaceAll("[^0-9]", "");
         if (cleanNit.isEmpty()) {
-            log.warn("Empty NIT after cleaning: {}", nit);
+            log.warn("DV Calculation: NIT is empty after cleaning for input: {}", nit);
             return 0;
         }
 
-        // Validate NIT length (Colombian NITs are typically 9-10 digits)
-        if (cleanNit.length() > 15) {
-            log.error("NIT too long: {} (length: {})", cleanNit, cleanNit.length());
+        // --- OVERFLOW PROTECTION ---
+        // Verify the NIT length does not exceed our primes array capacity (15 digits)
+        if (cleanNit.length() > primes.length) {
+            log.error("NIT overflow: {} exceeds maximum calculation length of 15", cleanNit);
             throw new InvalidOperationException(
-                    String.format("Invalid NIT length: %d digits (max 15)", cleanNit.length())
+                    "The document number is too long for Verification Digit (DV) calculation. Max 15 digits allowed."
             );
         }
+
 
         for (int i = 0; i < cleanNit.length(); i++) {
             int digit = Character.getNumericValue(cleanNit.charAt(cleanNit.length() - 1 - i));
@@ -289,46 +298,60 @@ public class ThirdPartyService {
      * Maps request DTO to entity, including all validations
      */
     private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity) {
-        entity.setDocumentNumber(request.getDocumentNumber());
+        // Standardize document number (remove spaces/leading-trailing whitespace)
+        // 1. Document standardization
+        String cleanDoc = request.getDocumentNumber() != null ? request.getDocumentNumber().trim() : null; //Local variable for reuse
+        entity.setDocumentNumber(cleanDoc);
         entity.setDocumentType(request.getDocumentType());
 
         // Calculate verification digit for numeric documents (Colombian NIT)
-        if (request.getDocumentNumber() != null && request.getDocumentNumber().matches("\\d+")) {
-            entity.setVerificationDigit(calculateDV(request.getDocumentNumber()));
+        if (cleanDoc != null && cleanDoc.matches("\\d+")) {
+            entity.setVerificationDigit(calculateDV(cleanDoc)); // Use cleanDoc
         }
-
-
         entity.setPersonType(request.getPersonType());
 
-        // Validate business name for legal entities
-        if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
+        // 2. Box 36: TRADE NAME (Optional for everyone)
+        entity.setTradeName(request.getTradeName() != null ?
+                request.getTradeName().trim().toUpperCase() : null);
+        // 3. Box 35 & Names: LEGAL IDENTIFICATION
+        // For Legal Entities (Persona Jurídica)
+       if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
+           // Business name is mandatory for legal entities (Razón Social)
             if (request.getBusinessName() == null || request.getBusinessName().trim().isEmpty()) {
-                throw new InvalidOperationException(
-                        "Business name is required for legal entities (Persona Jurídica)"
-                );
+                throw new InvalidOperationException("Business name (Razón Social) is required for legal entities.");
             }
-        }
-        // Validate names for natural persons
-        if ("NATURAL".equals(request.getPersonType())) {
-            if ((request.getFirstName() == null || request.getFirstName().trim().isEmpty()) ||
-                    (request.getLastName() == null || request.getLastName().trim().isEmpty())) {
-                throw new InvalidOperationException(
-                        "First name and last name are required for natural persons (Persona Natural)"
-                );
-            }
-        }
+            entity.setBusinessName(request.getBusinessName().trim().toUpperCase());
+        }else if ("NATURAL".equals(request.getPersonType())) {
+           // Names are mandatory for natural persons
+           if (request.getFirstName() == null || request.getLastName() == null) {
+               throw new InvalidOperationException("First and Last names are required for natural persons.");
+           }
+           entity.setFirstName(request.getFirstName().trim().toUpperCase());
+           entity.setMiddleName(request.getMiddleName() != null ? request.getMiddleName().trim().toUpperCase() : null);
+           entity.setLastName(request.getLastName().trim().toUpperCase());
+           entity.setSecondLastName(request.getSecondLastName() != null ? request.getSecondLastName().trim().toUpperCase() : null);
+
+           // Optional: A natural person can also have a Business Name (Box 35) in some contexts,
+           // but usually, they use Trade Name (Box 36).
+           entity.setBusinessName(request.getBusinessName() != null ?
+                   request.getBusinessName().trim().toUpperCase() : null);
+       }
 
         entity.setTaxRegime(request.getTaxRegime());
-        entity.setFirstName(request.getFirstName());
-        entity.setMiddleName(request.getMiddleName());
-        entity.setLastName(request.getLastName());
-        entity.setSecondLastName(request.getSecondLastName());
-        entity.setBusinessName(request.getBusinessName());
-        // Trim email to avoid whitespace issues
-        entity.setEmail(request.getEmail() != null ? request.getEmail().trim() : null);
+
+        // Contact Email normalization (lowercase is standard for emails)
+        entity.setEmail(request.getEmail() != null ?
+                request.getEmail().trim().toLowerCase() : null);
+
+        // Contact BillinfEmail normalization (lowercase is standard for emails)
+        entity.setBillingEmail(request.getBillingEmail() != null ?
+                request.getBillingEmail().trim().toLowerCase() : null);
+
         entity.setPhone(request.getPhone());
         entity.setMobile(request.getMobile());
-        entity.setAddress(request.getAddress());
+
+        // Address normalization (Standardized for reports)
+        entity.setAddress(request.getAddress() != null ? request.getAddress().trim().toUpperCase() : null);
 
         // Validate and set City
         City city = cityRepository.findById(request.getCityId())
@@ -336,6 +359,7 @@ public class ThirdPartyService {
                         String.format("City with ID %d not found", request.getCityId())
                 ));
         entity.setCity(city);
+
 
         // Validate and set default Cost Center (optional)
         if (request.getDefaultCostCenterId() != null) {
@@ -346,7 +370,11 @@ public class ThirdPartyService {
                             "Invalid Cost Center: Either not found, doesn't belong to company, or doesn't allow movements."
                     ));
             entity.setDefaultCostCenter(cc);
+        } else {
+            entity.setDefaultCostCenter(null);
         }
+
+
     }
 
     /**
@@ -370,6 +398,7 @@ public class ThirdPartyService {
         dto.setFullIdentity(entity.getFullIdentity());
 
         dto.setEmail(entity.getEmail());
+        dto.setBillingEmail(entity.getBillingEmail());
         dto.setMobile(entity.getMobile());
         dto.setAddress(entity.getAddress());
         dto.setActive(entity.getActive());

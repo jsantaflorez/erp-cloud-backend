@@ -23,7 +23,8 @@ import java.util.Optional;
         indexes = {
                 // Index for searching by business name (legal entities)
                 @Index(name = "idx_third_party_business_name", columnList = "company_id, business_name"),
-
+                // Index for Trade Name (Box 36)
+                @Index(name = "idx_third_party_trade_name", columnList = "company_id, trade_name"),
                 // Index for searching by person name (natural persons)
                 @Index(name = "idx_third_party_names", columnList = "company_id, first_name, last_name"),
 
@@ -83,11 +84,20 @@ public class ThirdParty extends BaseEntity implements Serializable {
     private String secondLastName;
 
     @Column(name = "business_name", length = 150)
-    private String businessName;
+    private String businessName;// RUT Box 35: Legal Name / Razón Social
+
+
+    @Column(name = "trade_name", length = 150)
+    private String tradeName;    // RUT Box 36: Trade Name / Nombre Comercial
 
     @Email
     @Column(name = "email", length = 150)
-    private String email;
+    private String email; // Contact
+
+    @Email
+    @Column(name = "billing_email", length = 150)
+    private String billingEmail; // Dedicated for electronic invoicing and fiscal documents
+
 
     @Column(name = "mobile", length = 100)
     private String mobile;
@@ -122,17 +132,17 @@ public class ThirdParty extends BaseEntity implements Serializable {
                 Optional.ofNullable(secondLastName).orElse("")
         ).trim();
 
-        // 2. Check if the legal name is valid (not empty or just spaces)
-        if (!legalName.isBlank()) {
-            return legalName;
+        // 2. If no personal names, use businessName (Razón Social)
+        if (legalName.isBlank()) {
+            legalName = Optional.ofNullable(businessName).orElse("Unknown");
         }
 
-        // 3. Fallback to business name if legal name is missing
-        if (this.businessName != null && !this.businessName.isBlank()) {
-            return this.businessName;
+        // 3. Append trade name if present (e.g., "RAFAEL DIAZ (BAR RAFAEL)")
+        if (tradeName != null && !tradeName.isBlank()) {
+            return legalName + " (" + tradeName + ")";
         }
 
-        return "Unknown Third Party";
+        return legalName;
     }
     public String getFullIdentity() {
         String id = (this.documentNumber != null) ? this.documentNumber : "No ID";

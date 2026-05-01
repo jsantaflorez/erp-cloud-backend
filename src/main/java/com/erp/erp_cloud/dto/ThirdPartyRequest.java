@@ -1,18 +1,18 @@
 package com.erp.erp_cloud.dto;
 
 import com.erp.erp_cloud.enums.TaxRegime;
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.*;
 import lombok.Data;
 
 @Data
 
 public class ThirdPartyRequest {
 
-    @NotBlank
+    @NotBlank(message = "Document number is required")
+    @Size(max = 15, message = "Document number cannot exceed 15 digits")
+    @Pattern(regexp = "^[0-9]*$", message = "Document number must contain only digits")
     private String documentNumber;
+
 
     @NotBlank
     private String documentType;
@@ -31,13 +31,16 @@ public class ThirdPartyRequest {
     @Size(max = 50, message = "LastName field can store  up to 100 characters")
     private String lastName;
     private String secondLastName;
-    @Size(max = 50, message = "BusinessName field can store  up to 150 characters")
+    @Size(max = 150, message = "BusinessName field can store  up to 150 characters")
     private String businessName;
+    @Size(max = 150, message = "TradeName field can store  up to 150 characters")
+    private String tradeName;
 
-    // In ThirdPartyRequest
     @Email(message = "Invalid email format")
     private String email;
 
+    @Email(message = "Invalid email format")
+    private String billingEmail;
 
 
 

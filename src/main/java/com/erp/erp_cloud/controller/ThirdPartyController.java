@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -39,12 +40,14 @@ public class ThirdPartyController {
                 .body(new ApiResponse<>("Third Party created successfully", true, created));
     }
 
+
+
     @GetMapping
-    @Operation(summary = "List/Search third parties", description = "Retrieves a paginated list of third parties. Can be filtered by a search string (name or ID).")
+    @Operation(summary = "List/Search third parties", description = "Retrieves a paginated list of third parties.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Page retrieved successfully")
-    public ResponseEntity<Page<ThirdPartyResponseDTO>> list(
+      public ResponseEntity<Page<ThirdPartyResponseDTO>> list(
             @RequestParam(required = false) String search,
-            @PageableDefault(size = 10, sort = "lastName") Pageable pageable) {
+            @ParameterObject @PageableDefault(size = 10, sort = "documentNumber") Pageable pageable) {
         return ResponseEntity.ok(thirdPartyService.listAll(search, pageable));
     }
 

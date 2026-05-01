@@ -20,10 +20,12 @@ public class ThirdPartyResponseDTO {
 
     // These are the "Calculated" fields from your Entity logic
     private String legalDisplayName;
+    private String tradeName;
     private String fullIdentity;
 
     // Contact information
     private String email;
+    private String billingEmail;
     private String mobile;
     private String phone;
     private String address;

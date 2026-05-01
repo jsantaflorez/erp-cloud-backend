@@ -12,46 +12,50 @@ import org.springframework.data.domain.Pageable;
 import java.util.Optional;
 
 @Repository
-public interface  ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
+public interface ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
 
-    Optional<ThirdParty> findByCompanyAndDocumentNumber(
-            Company company,
-            String documentNumber
-    );
+    // --- BASIC QUERIES ---
 
-    boolean existsByCompanyAndDocumentNumber(
-            Company company,
-            String documentNumber
-    );
+    Optional<ThirdParty> findByCompanyAndDocumentNumber(Company company, String documentNumber);
 
+    boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber);
 
+    Page<ThirdParty> findByCompany(Company company, Pageable pageable);
 
-
+    // --- INTEGRITY CHECKS ---
 
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntry e JOIN e.items item " +
             "WHERE item.thirdParty = :thirdParty")
     boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
 
-    @Query("SELECT tp FROM ThirdParty tp WHERE tp.company = :company AND " +
-            "(LOWER(tp.businessName) = LOWER(:name) OR " +
-            "CONCAT(LOWER(tp.firstName), ' ', LOWER(tp.lastName)) = LOWER(:name))")
+    // --- ADVANCED SEARCH (The Shield) ---
+
+    /**
+     * Professional search that covers all identification and name fields.
+     * Aligned with the uppercase normalization in Service.
+     */
+    @Query("SELECT t FROM ThirdParty t WHERE t.company = :company AND (" +
+            "UPPER(t.businessName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.tradeName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.firstName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.middleName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.lastName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.secondLastName) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.email) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(t.billingEmail) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "t.documentNumber LIKE CONCAT('%', :searchTerm, '%'))")
+    Page<ThirdParty> findBySearchTerm(
+            @Param("company") Company company,
+            @Param("searchTerm") String searchTerm,
+            Pageable pageable);
+
+    /**
+     * Exact legal name search for internal validations or specific lookups
+     */
+    @Query("SELECT tp FROM ThirdParty tp WHERE tp.company = :company AND (" +
+            "UPPER(tp.businessName) = UPPER(:name) OR " +
+            "UPPER(CONCAT(tp.firstName, ' ', tp.lastName)) = UPPER(:name))")
     Optional<ThirdParty> findByCompanyAndLegalName(@Param("company") Company company,
                                                    @Param("name") String name);
-
-
-
-    @Query("SELECT t FROM ThirdParty t WHERE t.company = :company AND (" +
-            "LOWER(t.businessName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-            "LOWER(t.firstName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-            "LOWER(t.lastName) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-            "t.documentNumber LIKE CONCAT('%', :searchTerm, '%'))")
-    Page<ThirdParty> findBySearchTerm(@Param("company") Company company,
-                                      @Param("searchTerm") String searchTerm,
-                                      Pageable pageable);
-    Page<ThirdParty> findByCompany(Company company, Pageable pageable);
-
-
-
-
 }
