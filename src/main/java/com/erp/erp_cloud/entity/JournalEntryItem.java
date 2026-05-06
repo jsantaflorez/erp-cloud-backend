@@ -1,15 +1,19 @@
 package com.erp.erp_cloud.entity;
 
 import jakarta.persistence.*;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
+
+import java.io.Serializable;
 import java.math.BigDecimal;
 
 @Entity
 @Table(name = "journal_entry_items")
 @Getter
 @Setter
-public class JournalEntryItem {
+@EqualsAndHashCode(callSuper = true)
+public class JournalEntryItem extends BaseEntity implements Serializable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

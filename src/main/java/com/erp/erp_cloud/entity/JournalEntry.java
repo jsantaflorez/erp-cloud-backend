@@ -1,8 +1,11 @@
 package com.erp.erp_cloud.entity;
 
 import jakarta.persistence.*;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
+
+import java.io.Serializable;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +22,8 @@ import java.util.List;
 )
 @Getter
 @Setter
-public class JournalEntry {
+@EqualsAndHashCode(callSuper = true)
+public class  JournalEntry extends BaseEntity implements Serializable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -1,10 +1,10 @@
 package com.erp.erp_cloud.controller;
 
 import com.erp.erp_cloud.dto.*;
-
 import com.erp.erp_cloud.service.JournalEntryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -14,84 +14,236 @@ import org.springframework.web.bind.annotation.*;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.Operation;
 
-
 import java.time.LocalDate;
+
+/**
+ * REST Controller for Journal Entries (Comprobantes Contables).
+ *
+ * Current Version: Manual Entry Only
+ * - All entries require manual balancing (debits = credits)
+ * - No automatic tax calculation
+ * - Full accountant control
+ *
+ * Future versions will support automated tax calculation.
+ */
 @RestController
 @RequestMapping("/api/v1/journal-entries")
 @RequiredArgsConstructor
-@Tag(name = "Journal Entries", description = "Endpoints for managing accounting vouchers") // Para Swagger/OpenAPI
+@Tag(name = "Journal Entries", description = "Endpoints for managing accounting vouchers (Comprobantes Contables)")
 public class JournalEntryController {
 
     private final JournalEntryService service;
 
+    // ═══════════════════════════════════════════════════════════
+    // CREATE OPERATIONS
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * STANDARD CREATE: Used for automated processes (Invoices, Payments).
-     * Includes auto-balancing and system tax calculations.
+     * Creates a new journal entry with strict validation.
+     *
+     * Business Rules (Version 1.0):
+     * - Entry MUST be perfectly balanced (total debits = total credits)
+     * - NO automatic tax calculation (taxes must be entered manually)
+     * - NO automatic balancing adjustments
+     * - Accounting period must be open for the entry date
+     *
+     * Request Body Example:
+     * {
+     *   "documentTypeId": 1,
+     *   "entryDate": "2026-05-01",
+     *   "description": "Venta al contado con IVA",
+     *   "items": [
+     *     {
+     *       "accountId": 4,
+     *       "debit": 1190.00,
+     *       "credit": 0.00,
+     *       "description": "Efectivo recibido"
+     *     },
+     *     {
+     *       "accountId": 27,
+     *       "debit": 0.00,
+     *       "credit": 1000.00,
+     *       "description": "Ingreso por venta"
+     *     },
+     *     {
+     *       "accountId": 10,
+     *       "debit": 0.00,
+     *       "credit": 190.00,
+     *       "description": "IVA generado 19%"
+     *     }
+     *   ]
+     * }
+     *
+     * @param request Journal entry data
+     * @return Created journal entry with generated document number
      */
     @PostMapping
-    @Operation(summary = "Create standard journal entry", description = "Used for automated processes like invoices or payments. Includes auto-balancing and system tax calculations.")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Journal entry created and balanced successfully")
-    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> create(@Valid @RequestBody JournalEntryRequest request) {
+    @Operation(
+            summary = "Create journal entry",
+            description = "Creates a new accounting voucher with strict manual validation. " +
+                    "Entry must be perfectly balanced (debits = credits). " +
+                    "Taxes must be entered manually (no automatic calculation)."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "201",
+            description = "Journal entry created successfully"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "400",
+            description = "Validation error: Entry is unbalanced, invalid date, or period is closed"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "404",
+            description = "Referenced entity not found (account, document type, third party, or cost center)"
+    )
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> create(
+            @Valid @RequestBody JournalEntryRequest request) {
+
         JournalEntryResponseDTO created = service.create(request);
+
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(new ApiResponse<>("Journal Entry created successfully", true, created));
+                .body(new ApiResponse<>(
+                        "Journal entry created successfully: " + created.getDocumentNumber(),
+                        true,
+                        created
+                ));
     }
 
-    /**
-     * MANUAL VOUCHER: Specific endpoint for accountants.
-     * Disables auto-balancing to ensure strict manual integrity.
-     */
-    @PostMapping("/manual")
-    @Operation(summary = "Create manual voucher", description = "Specific endpoint for manual accounting adjustments. Disables auto-balancing to ensure strict manual integrity.")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Manual voucher created successfully")
-    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> createManual(@Valid @RequestBody JournalEntryRequest request) {
-        // Calling the specific manual logic we just implemented
-        JournalEntryResponseDTO created = service.createManualVoucher(request);
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(new ApiResponse<>("Manual Voucher created successfully", true, created));
-    }
+    // ═══════════════════════════════════════════════════════════
+    // READ OPERATIONS
+    // ═══════════════════════════════════════════════════════════
 
     /**
-     * SEARCH & LIST: Optimized with pagination and date filters.
+     * Lists all journal entries with optional filtering and pagination.
+     *
+     * Query Parameters:
+     * - searchTerm: Searches in document number and description (optional)
+     * - startDate: Filter entries from this date onwards (optional)
+     * - endDate: Filter entries up to this date (optional)
+     * - page: Page number (0-based, default: 0)
+     * - size: Page size (default: 20)
+     * - sort: Sort criteria (e.g., "entryDate,desc")
+     *
+     * Examples:
+     * - GET /api/v1/journal-entries?page=0&size=20
+     * - GET /api/v1/journal-entries?searchTerm=RC-001
+     * - GET /api/v1/journal-entries?startDate=2026-01-01&endDate=2026-12-31
+     * - GET /api/v1/journal-entries?startDate=2026-05-01&sort=entryDate,desc
+     *
+     * @param searchTerm Optional search term
+     * @param startDate Optional start date filter
+     * @param endDate Optional end date filter
+     * @param pageable Pagination parameters
+     * @return Paginated list of journal entries
      */
-    /**
-     * SEARCH & LIST: Optimized with pagination and date filters.
-     */
-    @GetMapping // <--- CAMBIAR AQUÍ (estaba como @PostMapping("/manual"))
-    @Operation(summary = "Search and list entries", description = "Retrieves journal entries with support for pagination, date range filters, and search terms.")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Entries retrieved successfully")
-    public ResponseEntity<ApiResponse<Page<JournalEntryResponseDTO>>> getAll(
+    @GetMapping
+    @Operation(
+            summary = "List journal entries",
+            description = "Retrieves journal entries with support for pagination, date range filters, and search. " +
+                    "Search works on document number and description fields."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "200",
+            description = "Entries retrieved successfully"
+    )
+    public ResponseEntity<ApiResponse<Page<JournalEntryResponseDTO>>> list(
             @RequestParam(required = false) String searchTerm,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
-            Pageable pageable) {
-        Page<JournalEntryResponseDTO> data = service.listEntries(searchTerm, startDate, endDate, pageable);
-        return ResponseEntity.ok(new ApiResponse<>("Journal entries retrieved successfully", true, data));
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @ParameterObject Pageable pageable) {
+
+        Page<JournalEntryResponseDTO> data = service.listEntries(
+                searchTerm, startDate, endDate, pageable
+        );
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                String.format("Retrieved %d journal entries (page %d of %d)",
+                        data.getNumberOfElements(),
+                        data.getNumber() + 1,
+                        data.getTotalPages()),
+                true,
+                data
+        ));
     }
 
     /**
-     * GET BY DOCUMENT NUMBER: Useful for searching "CC-10" or "FV-500".
+     * Retrieves a journal entry by its document number.
+     *
+     * Document numbers are business-friendly identifiers like:
+     * - "RC-001" (Recibo de Caja 001)
+     * - "EG-0045" (Egreso 0045)
+     * - "CE-2056" (Comprobante de Egreso 2056)
+     *
+     * This is useful for searching entries by their human-readable reference.
+     *
+     * @param documentNumber Business document number (e.g., "RC-001")
+     * @return Journal entry details
      */
     @GetMapping("/by-number/{documentNumber}")
-    @Operation(summary = "Get by document number", description = "Retrieves an entry using its business reference number (e.g., CC-10, FV-500).")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Entry found")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Document number not found")
-    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> getByDocumentNumber(@PathVariable String documentNumber) {
+    @Operation(
+            summary = "Get entry by document number",
+            description = "Retrieves a journal entry using its business reference number " +
+                    "(e.g., RC-001, EG-0045). This is the human-readable identifier " +
+                    "printed on physical vouchers."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "200",
+            description = "Entry found"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "404",
+            description = "Document number not found"
+    )
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> getByDocumentNumber(
+            @PathVariable String documentNumber) {
+
         JournalEntryResponseDTO data = service.findByDocumentNumber(documentNumber);
-        return ResponseEntity.ok(new ApiResponse<>("Entry found", true, data));
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                "Journal entry found: " + documentNumber,
+                true,
+                data
+        ));
     }
+
     /**
-     * GET BY ID: Essential for the frontend "View Details" or "Edit" pages.
-     * Use this when you have the internal database ID.
+     * Retrieves a journal entry by its internal database ID.
+     *
+     * This is typically used by the frontend for:
+     * - View Details page
+     * - Edit functionality
+     * - Internal references
+     *
+     * Note: Use getByDocumentNumber for user-facing searches.
+     *
+     * @param id Database primary key
+     * @return Journal entry details
      */
     @GetMapping("/{id}")
-    @Operation(summary = "Retrieve a journal entry by ID", description = "Fetches a specific accounting voucher and validates ownership for the current company.")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Journal entry retrieved successfully")
-    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Journal entry not found")
+    @Operation(
+            summary = "Get entry by ID",
+            description = "Retrieves a specific journal entry by its internal database ID. " +
+                    "Used for detail views and editing. Validates that the entry " +
+                    "belongs to the current user's company."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "200",
+            description = "Journal entry retrieved successfully"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "404",
+            description = "Journal entry not found or belongs to another company"
+    )
     public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> getById(@PathVariable Long id) {
         JournalEntryResponseDTO data = service.findById(id);
-        return ResponseEntity.ok(new ApiResponse<>("Journal entry retrieved", true, data));
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                "Journal entry retrieved successfully",
+                true,
+                data
+        ));
     }
 }

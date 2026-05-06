@@ -12,7 +12,7 @@ import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.CompanyContext;
-import com.erp.erp_cloud.dto.TrialBalanceLine;  // ← Stays in dto/
+import com.erp.erp_cloud.dto.TrialBalanceLine;
 import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
 
 import java.math.RoundingMode;
@@ -25,20 +25,24 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
-
+/**
+ * Service for managing Journal Entries (Comprobantes Contables).
+ *
+ * Current Version: Manual Entry Only
+ * - No automatic tax calculation
+ * - No automatic balancing
+ * - Full accountant control over all entries
+ *
+ * Future versions will support automated tax calculation and system adjustments.
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class JournalEntryService {
 
     private static final Logger log = LoggerFactory.getLogger(JournalEntryService.class);
-    private static final BigDecimal ROUNDING_TOLERANCE = new BigDecimal("0.01");
 
     private final JournalEntryRepository repository;
     private final ChartOfAccountsRepository accountRepository;
@@ -46,117 +50,82 @@ public class JournalEntryService {
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
     private final CompanyContext companyContext;
-    private final AccountingEngineService accountingEngine;
     private final AccountingPeriodService accountingPeriodService;
 
+    // ═══════════════════════════════════════════════════════════
+    // CREATE OPERATIONS
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Creates a new journal entry with automated taxes and balancing.
+     * Creates a new journal entry with strict manual validation.
+     *
+     * Business Rules (Version 1.0 - Manual Entry):
+     * - Entry MUST be perfectly balanced (debits = credits)
+     * - NO automatic tax calculation (accountant enters taxes manually)
+     * - NO automatic balancing adjustments (full control to user)
+     * - Accounting period must be open for the entry date
+     * - All accounts must be active and posting accounts
+     * - Third party and cost center are required when account configuration demands it
+     *
+     * Validation Flow:
+     * 1. Date validation (not in future, within 90 days, period is open)
+     * 2. Balance validation (total debits must equal total credits)
+     * 3. Document type validation and consecutive assignment
+     * 4. Line item validation (account, amounts, third party, cost center)
+     * 5. Save transaction
+     *
+     * Future Enhancement: Automatic tax calculation will be added in a later version
+     * when the system is more refined and tax rules are fully configured.
+     *
+     * @param request Journal entry data from the user
+     * @return Saved journal entry with generated document number
+     * @throws InvalidOperationException if entry is unbalanced, period is closed,
+     *         or validation fails
+     * @throws ResourceNotFoundException if referenced entities don't exist
      */
     @Transactional
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
         Company currentCompany = companyContext.getCurrentCompany();
-        log.debug("Creating journal entry for company: {}", currentCompany.getId());
 
-        // 1. Header Validation
+        log.info("Creating journal entry for company: {}", currentCompany.getLegalName());
+
+        // 1. Date and Period Validation
         validateEntryDate(request.getEntryDate());
-        // 2. PERIOD VALIDATION - The "Bouncer"
         accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
 
-
+        // 2. Items Existence Validation
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
-        // 3. Document Setup
-        DocumentType docType = docTypeService.findById(request.getDocumentTypeId());
-        if (!docType.getCompany().getId().equals(currentCompany.getId())) {
-            throw new InvalidOperationException("This Document Type does not belong to the current company.");
-        }
+        // 3. CRITICAL: Balance Validation (Zero Tolerance)
+        validateBalance(request);
 
-        JournalEntry entry = new JournalEntry();
-        entry.setDocumentType(docType);
-        entry.setEntryDate(request.getEntryDate());
-        entry.setDescription(request.getDescription());
-        entry.setCompany(currentCompany);
+        // 4. Document Type Setup and Validation
+        DocumentType docType = validateAndGetDocumentType(request.getDocumentTypeId(), currentCompany);
 
-        // Consecutive logic with pessimistic lock
-        Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
-        entry.setConsecutive(nextNumber);
-        entry.setDocumentNumber(generateDocNumber(docType, nextNumber));
+        // 5. Create Entry Header
+        JournalEntry entry = createEntryHeader(docType, request, currentCompany);
 
-        // Safety check for duplicate document numbers
-        if (repository.existsByCompanyAndDocumentNumber(currentCompany, entry.getDocumentNumber())) {
-            log.error("Duplicate document number detected: {}", entry.getDocumentNumber());
-            throw new InvalidOperationException(
-                    "Document number already exists. Please try again.");
-        }
+        // 6. Process Line Items
+        processLineItems(entry, request, currentCompany);
 
-        // 4. PASS 1: Process User Items
-        for (int i = 0; i < request.getItems().size(); i++) {
-            var itemDto = request.getItems().get(i);
-            final int itemIndex = i;
-            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
-
-            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), currentCompany);
-
-            JournalEntryItem item = new JournalEntryItem();
-            item.setAccount(account);
-
-            // Ensure amounts are never null
-            BigDecimal debit = itemDto.getDebit() != null
-                    ? itemDto.getDebit().setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
-            BigDecimal credit = itemDto.getCredit() != null
-                    ? itemDto.getCredit().setScale(2, RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
-
-            item.setDebit(debit);
-            item.setCredit(credit);
-            item.setDescription(itemDto.getDescription());
-
-            handleThirdParty(item, itemDto, account, currentCompany);
-            handleCostCenter(item, itemDto, account, currentCompany);
-
-            entry.addItem(item);
-        }
-
-        // 5. PASS 2: Apply System Adjustments (Taxes & Balance)
-        applySystemAdjustments(entry, currentCompany);
-
-        // 6. Final Integrity Check
-        finalIntegrityCheck(entry);
-
-        // Log if auto-balancing was applied
-        if (wasAutoBalanced(entry)) {
-            log.warn("Journal entry {} was auto-balanced using account {}",
-                    entry.getDocumentNumber(),
-                    entry.getDocumentType().getDefaultAccount() != null
-                            ? entry.getDocumentType().getDefaultAccount().getCode()
-                            : "N/A");
-        }
+        // 7. Save and Return
+        log.info("Saving journal entry {} with {} items for company {}",
+                entry.getDocumentNumber(), entry.getItems().size(), currentCompany.getLegalName());
 
         return mapToResponseDTO(repository.save(entry));
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // PRIVATE CREATION HELPERS
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Creates a manual accounting voucher with strict validation rules.
-     * Unlike automated entries, manual vouchers do not allow system auto-balancing
-     * or hidden tax calculations, ensuring full control for the accountant.
-     *
-     * @param request The journal entry data from the user
-     * @return DTO representation of the saved manual voucher
-     * @throws InvalidOperationException if the entry is unbalanced or the period is closed
+     * Validates that total debits equal total credits.
+     * This is a fundamental accounting principle - the entry must balance.
      */
-    @Transactional
-    public JournalEntryResponseDTO createManualVoucher(JournalEntryRequest request) {
-        Company currentCompany = companyContext.getCurrentCompany();
-        log.info("Processing manual voucher for company: {}", currentCompany.getLegalName());
-
-        // 1. Validate that the accounting period is OPEN (Year/Month logic)
-        accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
-
-        // 2. Strict Balance Validation (Zero tolerance for manual entries)
-        // We calculate totals manually to ensure they match perfectly before processing
+    private void validateBalance(JournalEntryRequest request) {
         BigDecimal totalDebit = request.getItems().stream()
                 .map(i -> i.getDebit() != null ? i.getDebit() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -166,194 +135,118 @@ public class JournalEntryService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         if (totalDebit.compareTo(totalCredit) != 0) {
+            BigDecimal difference = totalDebit.subtract(totalCredit);
+            log.warn("Unbalanced entry attempt: Debit={}, Credit={}, Diff={}",
+                    totalDebit, totalCredit, difference);
+
             throw new InvalidOperationException(String.format(
-                    "Manual voucher is unbalanced. Debits: %s, Credits: %s. Difference: %s",
-                    totalDebit, totalCredit, totalDebit.subtract(totalCredit)));
+                    "Journal entry is unbalanced. Debits: %s, Credits: %s, Difference: %s. " +
+                            "Please ensure debits equal credits before submitting.",
+                    totalDebit.setScale(2, RoundingMode.HALF_UP),
+                    totalCredit.setScale(2, RoundingMode.HALF_UP),
+                    difference.setScale(2, RoundingMode.HALF_UP)));
         }
 
-        // 3. Document Type setup and validation
-        DocumentType docType = docTypeService.findById(request.getDocumentTypeId());
-        if (!docType.getCompany().getId().equals(currentCompany.getId())) {
-            throw new InvalidOperationException("Unauthorized Document Type for this company.");
+        log.debug("Balance validation passed: Debits={}, Credits={}", totalDebit, totalCredit);
+    }
+
+    /**
+     * Validates and retrieves the document type.
+     * Ensures the document type belongs to the current company.
+     */
+    private DocumentType validateAndGetDocumentType(Long docTypeId, Company company) {
+        DocumentType docType = docTypeService.findById(docTypeId);
+
+        if (!docType.getCompany().getId().equals(company.getId())) {
+            throw new InvalidOperationException(
+                    "This Document Type does not belong to the current company.");
         }
 
-        // 4. Initialize the Journal Entry entity
+        return docType;
+    }
+
+    /**
+     * Creates the journal entry header with document number assignment.
+     * Uses pessimistic locking to prevent duplicate consecutive numbers.
+     */
+    private JournalEntry createEntryHeader(DocumentType docType,
+                                           JournalEntryRequest request,
+                                           Company company) {
         JournalEntry entry = new JournalEntry();
         entry.setDocumentType(docType);
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
-        entry.setCompany(currentCompany);
+        entry.setCompany(company);
 
-        // 5. Assign consecutive number using a pessimistic lock to avoid collisions
+        // Get next consecutive number with pessimistic lock
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
         entry.setConsecutive(nextNumber);
         entry.setDocumentNumber(generateDocNumber(docType, nextNumber));
 
-        // 6. Map and validate each line item
+        // Safety check for duplicate document numbers
+        if (repository.existsByCompanyAndDocumentNumber(company, entry.getDocumentNumber())) {
+            log.error("Duplicate document number detected: {}", entry.getDocumentNumber());
+            throw new InvalidOperationException(
+                    "Document number already exists. This may be a concurrency issue. Please retry.");
+        }
+
+        log.debug("Entry header created: DocType={}, DocNum={}, Date={}",
+                docType.getCode(), entry.getDocumentNumber(), entry.getEntryDate());
+
+        return entry;
+    }
+
+    /**
+     * Processes and validates all line items.
+     * Each item is validated for:
+     * - Account existence and status
+     * - Amount validity (one of debit/credit must be > 0)
+     * - Third party requirement
+     * - Cost center requirement
+     */
+    private void processLineItems(JournalEntry entry,
+                                  JournalEntryRequest request,
+                                  Company company) {
         for (int i = 0; i < request.getItems().size(); i++) {
             var itemDto = request.getItems().get(i);
+            final int itemIndex = i;
 
-            // Ensure the account is active and is a "Posting Account" (Level 4+)
-            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), currentCompany);
+            // Validate amounts (must have either debit OR credit, not both or neither)
+            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
 
+            // Fetch and validate account
+            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), company);
+
+            // Create item
             JournalEntryItem item = new JournalEntryItem();
             item.setAccount(account);
-
-            // Scale to 2 decimal places for financial precision
-            item.setDebit(itemDto.getDebit().setScale(2, RoundingMode.HALF_UP));
-            item.setCredit(itemDto.getCredit().setScale(2, RoundingMode.HALF_UP));
+            item.setDebit(scaleAmount(itemDto.getDebit()));
+            item.setCredit(scaleAmount(itemDto.getCredit()));
             item.setDescription(itemDto.getDescription());
 
-            // Attach Third Party or Cost Center if the account configuration requires it
-            handleThirdParty(item, itemDto, account, currentCompany);
-            handleCostCenter(item, itemDto, account, currentCompany);
+            // Handle optional fields based on account configuration
+            handleThirdParty(item, itemDto, account, company);
+            handleCostCenter(item, itemDto, account, company);
 
             entry.addItem(item);
         }
 
-        // 7. Save to database and return the mapped response
-        // Note: We skip 'applySystemAdjustments' to maintain manual integrity
-        log.debug("Saving manual voucher: {}", entry.getDocumentNumber());
-        return mapToResponseDTO(repository.save(entry));
+        log.debug("Processed {} line items", request.getItems().size());
     }
 
-
-
     /**
-     * Logic to calculate taxes and close the accounting gap.
+     * Scales monetary amount to 2 decimal places.
+     * Ensures consistent precision across all financial calculations.
      */
-    private void applySystemAdjustments(JournalEntry entry, Company company) {
-        BigDecimal runningBalance = BigDecimal.ZERO;
-        List<JournalEntryItem> taxLines = new ArrayList<>();
-
-        // Calculate balance from user items and detect taxes
-        for (JournalEntryItem item : entry.getItems()) {
-            BigDecimal debit = Optional.ofNullable(item.getDebit()).orElse(BigDecimal.ZERO);
-            BigDecimal credit = Optional.ofNullable(item.getCredit()).orElse(BigDecimal.ZERO);
-            runningBalance = runningBalance.add(debit).subtract(credit);
-
-            // Get actual transaction amount (either debit or credit, not both)
-            BigDecimal baseForTax = debit.compareTo(BigDecimal.ZERO) > 0 ? debit : credit;
-
-            if (baseForTax.compareTo(BigDecimal.ZERO) > 0) {
-                TaxCalculationResult taxCheck = accountingEngine.calculateTax(item.getAccount(), baseForTax);
-
-                if (taxCheck.isTaxable() && taxCheck.getTaxAmount().compareTo(BigDecimal.ZERO) > 0) {
-                    log.debug("Tax detected: {} on account {} - Amount: {}",
-                            taxCheck.getTaxName(), item.getAccount().getCode(), taxCheck.getTaxAmount());
-
-                    JournalEntryItem taxItem = createAutoTaxItem(taxCheck, item, company);
-                    taxLines.add(taxItem);
-
-                    BigDecimal taxDebit = Optional.ofNullable(taxItem.getDebit()).orElse(BigDecimal.ZERO);
-                    BigDecimal taxCredit = Optional.ofNullable(taxItem.getCredit()).orElse(BigDecimal.ZERO);
-                    runningBalance = runningBalance.add(taxDebit).subtract(taxCredit);
-                }
-            }
-        }
-
-        // Add detected tax lines
-        taxLines.forEach(entry::addItem);
-        if (!taxLines.isEmpty()) {
-            log.info("Added {} auto-calculated tax line(s) to entry", taxLines.size());
-        }
-
-        // Apply final balancing line if a gap exists (with tolerance for rounding)
-        if (runningBalance.abs().compareTo(ROUNDING_TOLERANCE) > 0) {
-            log.warn("Applying balancing adjustment of {} to document type {}",
-                    runningBalance, entry.getDocumentType().getCode());
-            applyBalancingLine(entry, runningBalance, entry.getDocumentType());
-        }
+    private BigDecimal scaleAmount(BigDecimal amount) {
+        return amount != null
+                ? amount.setScale(2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
     }
 
     /**
-     * Creates an automatic tax line item based on tax calculation result.
-     */
-    private JournalEntryItem createAutoTaxItem(TaxCalculationResult tax, JournalEntryItem parent, Company company) {
-        JournalEntryItem item = new JournalEntryItem();
-        ChartOfAccounts taxAccount = accountRepository.findById(tax.getAccountId())
-                .orElseThrow(() -> new ResourceNotFoundException("Tax Account", tax.getAccountId()));
-
-        item.setAccount(taxAccount);
-
-        // Enhanced description with tax details
-        BigDecimal baseAmount = parent.getDebit().add(parent.getCredit());
-        item.setDescription(String.format("Auto-tax: %s (%.2f%% on %s)",
-                tax.getTaxName(),
-                tax.getRate(),
-                baseAmount.setScale(2, RoundingMode.HALF_UP)
-        ));
-
-        // Inherit third party from parent line
-        item.setThirdParty(parent.getThirdParty());
-
-        BigDecimal amount = tax.getTaxAmount().setScale(2, RoundingMode.HALF_UP);
-        if ("D".equalsIgnoreCase(tax.getSign())) {
-            item.setDebit(amount);
-            item.setCredit(BigDecimal.ZERO);
-        } else {
-            item.setDebit(BigDecimal.ZERO);
-            item.setCredit(amount);
-        }
-        return item;
-    }
-
-    /**
-     * Adds a balancing line to close any accounting gap.
-     */
-    private void applyBalancingLine(JournalEntry entry, BigDecimal runningBalance, DocumentType docType) {
-        if (docType.getDefaultAccount() == null) {
-            throw new InvalidOperationException(
-                    String.format("Document %s is unbalanced (difference: %s), but no default account is configured for auto-balancing.",
-                            docType.getCode(),
-                            runningBalance.setScale(2, RoundingMode.HALF_UP))
-            );
-        }
-
-        JournalEntryItem balanceLine = new JournalEntryItem();
-        balanceLine.setAccount(docType.getDefaultAccount());
-        balanceLine.setDescription(String.format("System balance adjustment (gap: %s)",
-                runningBalance.abs().setScale(2, RoundingMode.HALF_UP)));
-
-        BigDecimal gap = runningBalance.abs().setScale(2, RoundingMode.HALF_UP);
-        if (runningBalance.signum() > 0) { // More debits than credits
-            balanceLine.setCredit(gap);
-            balanceLine.setDebit(BigDecimal.ZERO);
-        } else {
-            balanceLine.setDebit(gap);
-            balanceLine.setCredit(BigDecimal.ZERO);
-        }
-        entry.addItem(balanceLine);
-    }
-
-    /**
-     * Final validation to ensure the entry is perfectly balanced.
-     */
-    private void finalIntegrityCheck(JournalEntry entry) {
-        BigDecimal total = entry.getItems().stream()
-                .map(i -> Optional.ofNullable(i.getDebit()).orElse(BigDecimal.ZERO)
-                        .subtract(Optional.ofNullable(i.getCredit()).orElse(BigDecimal.ZERO)))
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        if (total.abs().setScale(2, RoundingMode.HALF_UP).compareTo(ROUNDING_TOLERANCE) > 0) {
-            throw new InvalidOperationException(
-                    String.format("Final document is unbalanced. Difference: %s",
-                            total.setScale(2, RoundingMode.HALF_UP))
-            );
-        }
-    }
-
-    /**
-     * Checks if the entry was auto-balanced.
-     */
-    private boolean wasAutoBalanced(JournalEntry entry) {
-        return entry.getItems().stream()
-                .anyMatch(item -> item.getDescription() != null &&
-                        item.getDescription().startsWith("System balance adjustment"));
-    }
-
-    /**
-     * Generates document number from document type and consecutive.
+     * Generates document number from document type prefix and consecutive.
+     * Format: PREFIX-CONSECUTIVE (e.g., "CE-001", "EG-0045")
      */
     private String generateDocNumber(DocumentType docType, Long consecutive) {
         return (docType.getPrefix() != null && !docType.getPrefix().isBlank())
@@ -361,35 +254,17 @@ public class JournalEntryService {
                 : consecutive.toString();
     }
 
-    /**
-     * Fetches and validates an account for use in journal entries.
-     */
-    private ChartOfAccounts fetchAndValidateAccount(Long accountId, Company company) {
-        ChartOfAccounts account = accountRepository.findById(accountId)
-                .filter(a -> a.getCompany().getId().equals(company.getId()))
-                .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
-
-        if (!account.isActive()) {
-            throw new InvalidOperationException(
-                    String.format("Account %s - %s is inactive and cannot be used.",
-                            account.getCode(), account.getName())
-            );
-        }
-
-        if (!account.isPostingAccount()) {
-            throw new InvalidOperationException(
-                    String.format("Account %s - %s is not a posting account.",
-                            account.getCode(), account.getName())
-            );
-        }
-
-        return account;
-    }
-
-    // --- HELPER VALIDATIONS ---
+    // ═══════════════════════════════════════════════════════════
+    // VALIDATION HELPERS
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Validates entry date constraints.
+     *
+     * Rules:
+     * - Cannot be null
+     * - Cannot be in the future
+     * - Cannot be older than 90 days (configurable business rule)
      */
     private void validateEntryDate(LocalDate date) {
         if (date == null) {
@@ -402,22 +277,21 @@ public class JournalEntryService {
             throw new InvalidOperationException("Entry date cannot be in the future");
         }
 
+        // Business Rule: Prevent very old entries (data quality)
         LocalDate minAllowedDate = today.minusDays(90);
         if (date.isBefore(minAllowedDate)) {
             throw new InvalidOperationException(
-                    String.format("Entry date cannot be older than %s (90 days)", minAllowedDate)
+                    String.format("Entry date cannot be older than %s (90 days back). " +
+                            "For older dates, please contact system administrator.", minAllowedDate)
             );
         }
 
-        // TODO: Add fiscal period validation when implemented
-        // if (date.isBefore(company.getCurrentFiscalPeriodStart())) {
-        //     throw new InvalidOperationException(
-        //         "Cannot create entries before current fiscal period start date");
-        // }
+        log.debug("Entry date validated: {}", date);
     }
 
     /**
      * Validates that each item has either debit OR credit, but not both or neither.
+     * This is a fundamental accounting principle.
      */
     private void validateItemAmounts(BigDecimal debit, BigDecimal credit, int itemIndex) {
         boolean hasDebit = debit != null && debit.compareTo(BigDecimal.ZERO) > 0;
@@ -425,8 +299,11 @@ public class JournalEntryService {
 
         if (hasDebit && hasCredit) {
             throw new InvalidOperationException(
-                    String.format("Item #%d cannot have both debit (%.2f) and credit (%.2f).",
-                            itemIndex + 1, debit, credit)
+                    String.format("Item #%d cannot have both debit (%s) and credit (%s). " +
+                                    "Each line must be either a debit OR a credit, not both.",
+                            itemIndex + 1,
+                            debit.setScale(2, RoundingMode.HALF_UP),
+                            credit.setScale(2, RoundingMode.HALF_UP))
             );
         }
 
@@ -439,14 +316,50 @@ public class JournalEntryService {
     }
 
     /**
-     * Handles third party validation and assignment.
+     * Fetches and validates an account for use in journal entries.
+     *
+     * Validations:
+     * - Account exists
+     * - Belongs to current company
+     * - Is active (not deactivated)
+     * - Is a posting account (Level 4+ auxiliary account)
      */
-    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account, Company company) {
+    private ChartOfAccounts fetchAndValidateAccount(Long accountId, Company company) {
+        ChartOfAccounts account = accountRepository.findById(accountId)
+                .filter(a -> a.getCompany().getId().equals(company.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
+
+        if (!account.isActive()) {
+            throw new InvalidOperationException(
+                    String.format("Account %s - %s is inactive and cannot be used in journal entries.",
+                            account.getCode(), account.getName())
+            );
+        }
+
+        if (!account.isPostingAccount()) {
+            throw new InvalidOperationException(
+                    String.format("Account %s - %s is not a posting account. " +
+                                    "Only auxiliary accounts (Level 4+) can be used in entries.",
+                            account.getCode(), account.getName())
+            );
+        }
+
+        return account;
+    }
+
+    /**
+     * Handles third party validation and assignment.
+     * If the account requires a third party, validates that one is provided.
+     */
+    private void handleThirdParty(JournalEntryItem item,
+                                  JournalEntryRequest.ItemRequest dto,
+                                  ChartOfAccounts account,
+                                  Company company) {
         if (account.isRequiresThirdParty()) {
             if (dto.getThirdPartyId() == null) {
                 throw new InvalidOperationException(
-                        String.format("Account %s requires a Third Party", account.getCode())
+                        String.format("Account %s (%s) requires a Third Party to be specified.",
+                                account.getCode(), account.getName())
                 );
             }
 
@@ -454,19 +367,30 @@ public class JournalEntryService {
                     .filter(t -> t.getCompany().getId().equals(company.getId()))
                     .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId()));
 
+            if (!thirdParty.getActive()) {
+                throw new InvalidOperationException(
+                        String.format("Third Party %s is inactive and cannot be used.",
+                                thirdParty.getLegalDisplayName())
+                );
+            }
+
             item.setThirdParty(thirdParty);
         }
     }
 
     /**
      * Handles cost center validation and assignment.
+     * If the account requires a cost center, validates that one is provided.
      */
-    private void handleCostCenter(JournalEntryItem item, JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account, Company company) {
+    private void handleCostCenter(JournalEntryItem item,
+                                  JournalEntryRequest.ItemRequest dto,
+                                  ChartOfAccounts account,
+                                  Company company) {
         if (account.isRequiresCostCenter()) {
             if (dto.getCostCenterId() == null) {
                 throw new InvalidOperationException(
-                        String.format("Account %s requires a Cost Center", account.getCode())
+                        String.format("Account %s (%s) requires a Cost Center to be specified.",
+                                account.getCode(), account.getName())
                 );
             }
 
@@ -474,17 +398,34 @@ public class JournalEntryService {
                     .filter(c -> c.getCompany().getId().equals(company.getId()))
                     .orElseThrow(() -> new ResourceNotFoundException("CostCenter", dto.getCostCenterId()));
 
+            if (!costCenter.isActive()) {
+                throw new InvalidOperationException(
+                        String.format("Cost Center %s is inactive and cannot be used.",
+                                costCenter.getName())
+                );
+            }
+
             item.setCostCenter(costCenter);
         }
     }
 
-    // --- READ METHODS ---
+    // ═══════════════════════════════════════════════════════════
+    // READ OPERATIONS
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Lists journal entries with optional filtering and pagination.
+     *
+     * @param searchTerm Optional search term (searches document number and description)
+     * @param start Optional start date filter
+     * @param end Optional end date filter
+     * @param pageable Pagination parameters
+     * @return Paginated list of journal entries
      */
-    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate start,
-                                                     LocalDate end, Pageable pageable) {
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm,
+                                                     LocalDate start,
+                                                     LocalDate end,
+                                                     Pageable pageable) {
         Company company = companyContext.getCurrentCompany();
 
         log.debug("Listing journal entries for company: {} with filters - search: {}, dates: {} to {}",
@@ -496,6 +437,10 @@ public class JournalEntryService {
 
     /**
      * Finds a journal entry by document number.
+     *
+     * @param docNum Document number (e.g., "CE-001")
+     * @return Journal entry details
+     * @throws ResourceNotFoundException if not found
      */
     public JournalEntryResponseDTO findByDocumentNumber(String docNum) {
         Company company = companyContext.getCurrentCompany();
@@ -524,14 +469,19 @@ public class JournalEntryService {
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
     }
 
-    /**
-     * Generates a trial balance report with account class summaries.
-     * Optimized for single-pass processing.
-     */
-
+    // ═══════════════════════════════════════════════════════════
+    // TRIAL BALANCE REPORTS
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Generates Trial Balance Report as of a specific date.
+     *
+     * Shows cumulative balances for all accounts up to the specified date:
+     * - Account code and name
+     * - Total debits
+     * - Total credits
+     * - Net balance
+     * - Summary by account class
      *
      * @param asOfDate Date for the trial balance (null = current date)
      * @return Complete trial balance report
@@ -585,7 +535,7 @@ public class JournalEntryService {
                     totalDebit, totalCredit, totalDebit.subtract(totalCredit));
         }
 
-        // BUILD the report using Builder pattern
+        // Build the report
         return TrialBalanceReport.builder()
                 .companyName(company.getLegalName())
                 .asOfDate(asOfDate)
@@ -608,17 +558,14 @@ public class JournalEntryService {
      *
      * Business Rules:
      * - Balance Sheet accounts (1,2,3): Opening balance = actual prior balance
-     * - Income Statement accounts (4,5,6,7): Opening balance = ZERO (always)
+     * - Income Statement accounts (4,5,6,7): Opening balance = ZERO (temporary accounts)
      *
      * @param startDate Start of the reporting period
      * @param endDate End of the reporting period
      * @return Detailed trial balance report
      */
-    @Transactional(readOnly = true)
-    public TrialBalanceReportDetailed getTrialBalanceDetailed(
-            LocalDate startDate,
-            LocalDate endDate) {
-
+    public TrialBalanceReportDetailed getTrialBalanceDetailed(LocalDate startDate,
+                                                              LocalDate endDate) {
         Company company = companyContext.getCurrentCompany();
 
         // Validation
@@ -732,6 +679,9 @@ public class JournalEntryService {
                 .build();
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // HELPER METHODS FOR REPORTS
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Helper method to get display name for account class.
@@ -767,6 +717,10 @@ public class JournalEntryService {
             default -> "Other";
         };
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // DTO MAPPING
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Maps JournalEntry entity to response DTO.
