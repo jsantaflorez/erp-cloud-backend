@@ -11,6 +11,9 @@ public class JournalEntryResponseDTO {
     private String documentNumber;
     private LocalDate entryDate;
     private String description;
+    private boolean annulled;
+    private java.time.LocalDateTime annulledAt;
+    private String annulmentReason;
     private List<ItemResponse> items;
 
     @Data

@@ -7,7 +7,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,45 +14,39 @@ import java.util.Optional;
 public interface AccountingPeriodRepository extends JpaRepository<AccountingPeriod, Long> {
 
     /**
-     * Finds a specific accounting period for a company.
+     * Finds a specific period by company, year, and month.
      */
     Optional<AccountingPeriod> findByCompanyAndYearAndMonth(Company company, Integer year, Integer month);
 
     /**
-     * Gets all periods for a company, ordered by most recent first.
+     * Retrieves all periods for a company, ordered by date descending.
+     * Used for the main list in the Controller.
      */
     List<AccountingPeriod> findByCompanyOrderByYearDescMonthDesc(Company company);
 
     /**
-     * Gets all closed periods for a company.
+     * Retrieves only closed periods for a company.
      */
-    List<AccountingPeriod> findByCompanyAndIsOpenFalseOrderByYearDescMonthDesc(Company company);
+    List<AccountingPeriod> findByCompanyAndOpenFalse(Company company);
 
     /**
-     * Gets all open periods for a company.
+     * Retrieves only open periods for a company.
      */
-    List<AccountingPeriod> findByCompanyAndIsOpenTrueOrderByYearDescMonthDesc(Company company);
+    List<AccountingPeriod> findByCompanyAndOpenTrue(Company company);
 
     /**
-     * Checks if a period exists for a company.
+     * CRITICAL: Checks if a Fiscal Year is locked (Annual Close).
+     * If true, it overrides any individual month status.
+     */
+    @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END " +
+            "FROM AccountingPeriod p " +
+            "WHERE p.company = :company " +
+            "AND p.year = :year " +
+            "AND p.yearClose = true")
+    boolean existsByCompanyAndYearAndYearCloseTrue(@Param("company") Company company, @Param("year") Integer year);
+
+    /**
+     * Checks if a period exists for a specific month.
      */
     boolean existsByCompanyAndYearAndMonth(Company company, Integer year, Integer month);
-/**
- *   Ensures the entryDate falls within a Company-specific period that is OPEN.
- */
-@Query("""
-        SELECT COUNT(p) > 0 
-        FROM AccountingPeriod p 
-        WHERE p.company = :company 
-          AND p.year = YEAR(:date) 
-          AND p.month = MONTH(:date) 
-          AND p.isOpen = true
-    """)
-boolean isDateInOpenPeriod(
-        @Param("company") Company company,
-        @Param("date") java.time.LocalDate date
-);
-
-
-
 }

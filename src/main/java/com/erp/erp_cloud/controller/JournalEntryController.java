@@ -246,4 +246,39 @@ public class JournalEntryController {
                 data
         ));
     }
+
+    // Dentro de JournalEntryController.java
+
+    /**
+     * Annuls a journal entry.
+     * Annulling is the professional way to "cancel" a voucher without deleting it.
+     * The document keeps its number but its financial effect is neutralized.
+     */
+    @PatchMapping("/{id}/annul")
+    @Operation(
+            summary = "Annul journal entry",
+            description = "Neutralizes a journal entry's financial impact. " +
+                    "The entry remains in the database for audit trail but is marked as annulled. " +
+                    "Cannot annul entries in closed accounting periods."+
+                     "Requires a reason for audit purposes."
+       )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "200",
+            description = "Journal entry annulled successfully"
+    )
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> annul(
+            @PathVariable Long id,
+            @Valid @RequestBody JournalEntryRequest.AnnulmentRequest request) {
+
+        JournalEntryResponseDTO annulled = service.annul(id, request);
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                "Journal entry annulled successfully: " + annulled.getDocumentNumber(),
+                true,
+                annulled
+        ));
+    }
+
+
+
 }

@@ -253,6 +253,70 @@ public class JournalEntryService {
                 ? docType.getPrefix().trim() + "-" + consecutive
                 : consecutive.toString();
     }
+    // Dentro de JournalEntryService.java
+
+    /**
+     * Annuls an existing journal entry.
+     * * Business Rules:
+     * 1. Entry must exist and belong to the current company.
+     * 2. The entry date must belong to an OPEN accounting period (Month and Year).
+     * 3. Entry must not be already annulled.
+     * 4. Annulling resets all debits and credits to zero to neutralize financial impact,
+     * but preserves the document number and metadata for audit trails.
+     */
+
+
+    @Transactional
+    public JournalEntryResponseDTO annul(Long id, JournalEntryRequest.AnnulmentRequest annulRequest) {
+        Company currentCompany = companyContext.getCurrentCompany();
+
+        // 1. Fetch and validate ownership
+        JournalEntry entry = repository.findById(id)
+                .filter(e -> e.getCompany().getId().equals(currentCompany.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
+
+        // 2. CHECK: Fiscal Lock (Month/Year)
+        // This is critical: accountingPeriodService must check if the date's period is open.
+        accountingPeriodService.validateDateIsOpen(entry.getEntryDate(), currentCompany);
+
+        // 3. CHECK: Already annulled
+        if (entry.isAnnulled()) {
+            throw new InvalidOperationException("Journal entry is already annulled.");
+        }
+        // 4. CHECK: is inactive
+
+        if (!entry.isActive()) {
+            throw new InvalidOperationException("Cannot annul an inactive (deleted) journal entry.");
+        }
+
+
+        log.info("Annulling journal entry {} (ID: {}) for company {}",
+                entry.getDocumentNumber(), id, currentCompany.getLegalName());
+
+        // 5. Neutralize financial impact
+        // We set amounts to zero but keep the items for the audit trail.
+        // Option: You could also add an 'annulledReason' if you update your DTO.
+        entry.setAnnulled(true);
+        entry.setAnnulledAt(java.time.LocalDateTime.now());
+        entry.setAnnulmentReason(annulRequest.getReason());
+        // entry.setAnnulledBy(...) // If you have security context for the user
+
+        // 6. Financial Neutralization: Preserve items but zero out their values
+
+        for (JournalEntryItem item : entry.getItems()) {
+            item.setDebit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            item.setCredit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+        }
+
+        // 7. Update description to indicate annulment
+        String prefix = "[ANULADO] ";
+        if (!entry.getDescription().startsWith(prefix)) {
+            entry.setDescription(prefix + entry.getDescription());
+        }
+        JournalEntry savedEntry = repository.save(entry);
+        log.info("Journal entry {} successfully annulled and zeroed out.", savedEntry.getDocumentNumber());
+        return mapToResponseDTO(savedEntry);
+    }
 
     // ═══════════════════════════════════════════════════════════
     // VALIDATION HELPERS

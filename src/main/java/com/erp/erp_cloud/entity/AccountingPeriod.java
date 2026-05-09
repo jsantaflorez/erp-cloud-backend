@@ -22,10 +22,21 @@ import java.time.LocalDateTime;
                 )
         },
         indexes = {
-                // For querying open periods
-                @Index(name = "idx_period_company_open", columnList = "company_id, is_open"),
-                // For date range queries
-                @Index(name = "idx_period_company_year_month", columnList = "company_id, year, month")
+                // 1. New: For high-level Year-End closure validation (Hierarchy)
+                @Index(
+                        name = "idx_period_year_hierarchy",
+                        columnList = "company_id, year, is_year_close"
+                ),
+                // 2. Existing: For querying open periods (Monthly)
+                @Index(
+                        name = "idx_period_company_open",
+                        columnList = "company_id, is_open"
+                ),
+                // 3. Existing: Optimized for specific date lookups
+                @Index(
+                        name = "idx_period_company_year_month",
+                        columnList = "company_id, year, month"
+                )
         }
 )
 @Getter
@@ -43,8 +54,11 @@ public class AccountingPeriod {
     @Column(nullable = false)
     private Integer month; // 1 to 12
 
-    @Column(name = "is_open", nullable = false)
-    private boolean isOpen = true;
+    @Column(name = "is_year_close", nullable = false)
+    private boolean yearClose = false;
+
+    @Column(name = "is_open", nullable = false) //blocks a specific month
+    private boolean open = true;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "company_id", nullable = false)

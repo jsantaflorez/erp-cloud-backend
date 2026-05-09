@@ -15,19 +15,24 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
-
 @Repository
 public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long> {
 
+    /**
+     * Search journal entries with filters.
+     * Excludes logically deleted records (active = false).
+     */
     @Query(value = "SELECT j FROM JournalEntry j " +
-            "JOIN FETCH j.documentType " + // Optimization: Fetch docType in 1 query
+            "JOIN FETCH j.documentType " +
             "WHERE j.company = :company " +
+            "AND j.active = true " +
             "AND (:searchTerm IS NULL OR " +
             "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-            "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " + // Faster prefix search
+            "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
             "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
             "AND (:endDate IS NULL OR j.entryDate <= :endDate)",
             countQuery = "SELECT COUNT(j) FROM JournalEntry j WHERE j.company = :company " +
+                    "AND j.active = true " +
                     "AND (:searchTerm IS NULL OR LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')))")
     Page<JournalEntry> searchEntries(
             @Param("company") Company company,
@@ -36,21 +41,44 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("endDate") LocalDate endDate,
             Pageable pageable);
 
-
-
+    /**
+     * Checks if a third party has associated transactions in active journal entries.
+     */
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntry e JOIN e.items item " +
-            "WHERE item.thirdParty = :thirdParty")
+            "WHERE item.thirdParty = :thirdParty AND e.active = true")
     boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
 
-    boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber);
-    Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber);
-
+    /**
+     * Checks for duplicate document numbers.
+     * We use 'AndActiveTrue' to allow reuse of document numbers if the previous
+     * entry was logically deleted (active = false).
+     */
+    boolean existsByCompanyAndDocumentNumberAndActiveTrue(Company company, String documentNumber);
 
     /**
-     * Calculates account balances as of a specific date.
-     *
-     * Returns: [account_code, account_nature, total_debit, total_credit]
+     * Alias for compatibility with existing Service logic.
+     * Internally calls the ActiveTrue version to maintain data integrity.
+     */
+    default boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber) {
+        return existsByCompanyAndDocumentNumberAndActiveTrue(company, documentNumber);
+    }
+
+    /**
+     * Finds an active journal entry by document number.
+     */
+    Optional<JournalEntry> findByCompanyAndDocumentNumberAndActiveTrue(Company company, String documentNumber);
+
+    /**
+     * Alias for compatibility with existing Service logic.
+     */
+    default Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber) {
+        return findByCompanyAndDocumentNumberAndActiveTrue(company, documentNumber);
+    }
+
+    /**
+     * Calculates account balances for the Trial Balance report.
+     * Filtering by active = true ensures deleted records don't affect totals.
      */
     @Query("""
         SELECT 
@@ -63,6 +91,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         JOIN i.journalEntry je
         WHERE a.company = :company
           AND je.entryDate <= :asOfDate
+          AND je.active = true
           AND a.postingAccount = true
           AND a.active = true
         GROUP BY a.code, a.nature
@@ -73,25 +102,21 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("asOfDate") LocalDate asOfDate
     );
 
-
-
-
-    // Inside JournalEntryRepository.java
-
     /**
-     * Gets all transaction items for a range of accounts and dates.
-     * Used to populate the Auxiliary Ledger rows.
+     * Retrieves all items for the Auxiliary Ledger.
+     * Includes annulled entries but excludes logically deleted entries.
      */
     @Query("""
-    SELECT i FROM JournalEntry e 
-    JOIN e.items i 
-    JOIN i.account a 
-    WHERE e.company = :company 
-      AND e.entryDate BETWEEN :startDate AND :endDate 
-      AND a.code BETWEEN :startCode AND :endCode 
-      AND a.postingAccount = true 
-    ORDER BY a.code ASC, e.entryDate ASC, e.id ASC
-""")
+        SELECT i FROM JournalEntry e 
+        JOIN e.items i 
+        JOIN i.account a 
+        WHERE e.company = :company 
+          AND e.active = true 
+          AND e.entryDate BETWEEN :startDate AND :endDate 
+          AND a.code BETWEEN :startCode AND :endCode 
+          AND a.postingAccount = true 
+        ORDER BY a.code ASC, e.entryDate ASC, e.id ASC
+    """)
     List<JournalEntryItem> findItemsForAuxiliary(
             @Param("company") Company company,
             @Param("startDate") LocalDate startDate,

@@ -17,6 +17,7 @@ public class AccountingPeriodResponseDTO {
     private Integer year;
     private Integer month;
     private String periodCode; // e.g., "2026-01"
+    private boolean isYearClose;
     private boolean isOpen;
     private LocalDateTime closedAt;
     private String closedBy;
