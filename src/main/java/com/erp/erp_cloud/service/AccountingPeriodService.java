@@ -141,6 +141,34 @@ public class AccountingPeriodService {
         return mapToResponseDTO(repository.save(period));
     }
 
+
+    /**
+     * Reopens a full fiscal year by removing the YearClose seal.
+     * This will allow transactions in months that are marked as OPEN.
+     */
+
+    @Transactional
+    public void reopenYear(Integer year, String reopenedBy, String notes) {
+        Company company = companyContext.getCurrentCompany();
+
+        // 1. Get ALL records for that year
+        List<AccountingPeriod> yearPeriods = repository.findByCompanyAndYear(company, year);
+
+        // 2. Filter those that have the annual seal and turn it off
+        yearPeriods.stream()
+                .filter(AccountingPeriod::isYearClose)
+                .forEach(period -> {
+                    period.setYearClose(false);
+                    period.setReopenedAt(LocalDateTime.now());
+                    period.setReopenedBy(reopenedBy);
+                    period.setReopeningNotes("Annual unseal: " + notes);
+                });
+
+        repository.saveAll(yearPeriods);
+        log.info("Fiscal Year {} has been unsealed by {}", year, reopenedBy);
+    }
+
+
     // ═══════════════════════════════════════════════════════════
     // VALIDATION (Used by JournalEntryService)
     // ═══════════════════════════════════════════════════════════

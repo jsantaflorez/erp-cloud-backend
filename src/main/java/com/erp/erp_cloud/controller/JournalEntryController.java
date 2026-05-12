@@ -111,6 +111,52 @@ public class JournalEntryController {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // UPDATE & STATE OPERATIONS
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Updates an existing journal entry.
+     * * Business Rules:
+     * - Both current and new entry dates must be in OPEN accounting periods.
+     * - The entry must be perfectly balanced after the update.
+     * - All item validations (accounts, third parties, cost centers) are re-evaluated.
+     * * @param id Internal database ID of the entry to update
+     * @param request Updated journal entry data
+     * @return Updated journal entry details
+     */
+    @PutMapping("/{id}")
+    @Operation(
+            summary = "Update journal entry",
+            description = "Updates an existing accounting voucher. " +
+                    "Validation ensures that neither the old date nor the new date belongs to a closed period. " +
+                    "The entry must remain balanced (debits = credits)."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "200",
+            description = "Journal entry updated successfully"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "400",
+            description = "Validation error: Unbalanced entry or attempting to modify a closed period"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "404",
+            description = "Journal entry, account, or referenced entity not found"
+    )
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> update(
+            @PathVariable Long id,
+            @Valid @RequestBody JournalEntryRequest request) {
+
+        JournalEntryResponseDTO updated = service.update(id, request);
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                "Journal entry updated successfully: " + updated.getDocumentNumber(),
+                true,
+                updated
+        ));
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // READ OPERATIONS
     // ═══════════════════════════════════════════════════════════
 

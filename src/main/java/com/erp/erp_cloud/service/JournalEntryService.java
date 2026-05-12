@@ -117,6 +117,9 @@ public class JournalEntryService {
         return mapToResponseDTO(repository.save(entry));
     }
 
+
+    
+
     // ═══════════════════════════════════════════════════════════
     // PRIVATE CREATION HELPERS
     // ═══════════════════════════════════════════════════════════
@@ -253,19 +256,14 @@ public class JournalEntryService {
                 ? docType.getPrefix().trim() + "-" + consecutive
                 : consecutive.toString();
     }
-    // Dentro de JournalEntryService.java
 
     /**
-     * Annuls an existing journal entry.
+     * Annuls a journal entry by neutralizing its financial impact.
      * * Business Rules:
-     * 1. Entry must exist and belong to the current company.
-     * 2. The entry date must belong to an OPEN accounting period (Month and Year).
-     * 3. Entry must not be already annulled.
-     * 4. Annulling resets all debits and credits to zero to neutralize financial impact,
-     * but preserves the document number and metadata for audit trails.
+     * 1. Entry's date must belong to an OPEN accounting period.
+     * 2. All line item amounts are set to zero to neutralize the balance.
+     * 3. Document metadata is preserved for audit and consecutive integrity.
      */
-
-
     @Transactional
     public JournalEntryResponseDTO annul(Long id, JournalEntryRequest.AnnulmentRequest annulRequest) {
         Company currentCompany = companyContext.getCurrentCompany();
@@ -275,47 +273,87 @@ public class JournalEntryService {
                 .filter(e -> e.getCompany().getId().equals(currentCompany.getId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
 
-        // 2. CHECK: Fiscal Lock (Month/Year)
-        // This is critical: accountingPeriodService must check if the date's period is open.
+        // 2. PERIOD VALIDATION: Block annulment if the period is already closed
         accountingPeriodService.validateDateIsOpen(entry.getEntryDate(), currentCompany);
 
-        // 3. CHECK: Already annulled
+        // 3. STATE VALIDATION: Avoid double annulment or editing deleted records
         if (entry.isAnnulled()) {
             throw new InvalidOperationException("Journal entry is already annulled.");
         }
-        // 4. CHECK: is inactive
 
         if (!entry.isActive()) {
             throw new InvalidOperationException("Cannot annul an inactive (deleted) journal entry.");
         }
 
+        log.info("Annuling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
 
-        log.info("Annulling journal entry {} (ID: {}) for company {}",
-                entry.getDocumentNumber(), id, currentCompany.getLegalName());
-
-        // 5. Neutralize financial impact
-        // We set amounts to zero but keep the items for the audit trail.
-        // Option: You could also add an 'annulledReason' if you update your DTO.
+        // 4. FINANCIAL NEUTRALIZATION: Zero out debits and credits
         entry.setAnnulled(true);
         entry.setAnnulledAt(java.time.LocalDateTime.now());
         entry.setAnnulmentReason(annulRequest.getReason());
-        // entry.setAnnulledBy(...) // If you have security context for the user
-
-        // 6. Financial Neutralization: Preserve items but zero out their values
 
         for (JournalEntryItem item : entry.getItems()) {
             item.setDebit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
             item.setCredit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         }
 
-        // 7. Update description to indicate annulment
-        String prefix = "[ANULADO] ";
+        // 5. AUDIT LOGGING: Mark the description as annulled
+        String prefix = "[ANNULLED] ";
         if (!entry.getDescription().startsWith(prefix)) {
             entry.setDescription(prefix + entry.getDescription());
         }
+
         JournalEntry savedEntry = repository.save(entry);
-        log.info("Journal entry {} successfully annulled and zeroed out.", savedEntry.getDocumentNumber());
+        log.info("Journal entry {} successfully neutralized.", savedEntry.getDocumentNumber());
+
         return mapToResponseDTO(savedEntry);
+    }
+    /**
+     * Updates an existing journal entry.
+     * * Business Rules:
+     * 1. The current entry date must be in an OPEN period (cannot modify history).
+     * 2. The new entry date must be in an OPEN period (cannot move data to locked periods).
+     * 3. Total balance must remain zero (Debits = Credits).
+     * 4. All business rules from 'create' are reapplied to the updated data.
+     */
+    @Transactional
+    public JournalEntryResponseDTO update(Long id, JournalEntryRequest request) {
+        Company currentCompany = companyContext.getCurrentCompany();
+
+        // 1. Fetch existing entry and verify ownership
+        JournalEntry existingEntry = repository.findById(id)
+                .filter(e -> e.getCompany().getId().equals(currentCompany.getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
+
+        // 2. PERIOD VALIDATION: Double-check strategy
+        // First, check if the record we want to edit is already "locked" by a prior close
+        accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), currentCompany);
+
+        // Second, if changing the date, ensure the target date is also open
+        if (!existingEntry.getEntryDate().equals(request.getEntryDate())) {
+            validateEntryDate(request.getEntryDate()); // Reuses your 90-day/future validation
+            accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
+        }
+
+        // 3. FINANCIAL VALIDATION: Ensure the updated request is still balanced
+        validateBalance(request);
+
+        log.info("Updating journal entry {} (ID: {}) for company {}",
+                existingEntry.getDocumentNumber(), id, currentCompany.getLegalName());
+
+        // 4. HEADER UPDATE
+        existingEntry.setEntryDate(request.getEntryDate());
+        existingEntry.setDescription(request.getDescription());
+
+        // 5. ITEMS UPDATE: Clear current items and re-process them to ensure full validation
+        // This ensures third-party and cost-center rules are re-evaluated for the new accounts
+        existingEntry.getItems().clear();
+        processLineItems(existingEntry, request, currentCompany);
+
+        JournalEntry saved = repository.save(existingEntry);
+        log.info("Journal entry {} updated successfully", saved.getDocumentNumber());
+
+        return mapToResponseDTO(saved);
     }
 
     // ═══════════════════════════════════════════════════════════

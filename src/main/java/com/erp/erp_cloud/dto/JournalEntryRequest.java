@@ -45,7 +45,7 @@ public class JournalEntryRequest {
         private String description;
     }
     @Data
-    public class AnnulmentRequest {
+    public static class AnnulmentRequest {
         @Size(max = 255, message = "Reason is too long")
         @NotEmpty(message = "Annulment reason is required for audit trail")
         private String reason;

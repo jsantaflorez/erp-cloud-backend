@@ -49,4 +49,9 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
      * Checks if a period exists for a specific month.
      */
     boolean existsByCompanyAndYearAndMonth(Company company, Integer year, Integer month);
+    /**
+     * Retrieves all period records for a specific year.
+     * Useful for bulk operations like unsealing a fiscal year.
+     */
+    List<AccountingPeriod> findByCompanyAndYear(Company company, Integer year);
 }

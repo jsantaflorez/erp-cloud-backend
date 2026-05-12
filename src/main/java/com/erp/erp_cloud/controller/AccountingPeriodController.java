@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import com.erp.erp_cloud.dto.AccountingPeriodActionRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodResponseDTO;
 import com.erp.erp_cloud.dto.ApiResponse;
@@ -79,36 +80,25 @@ public class AccountingPeriodController {
     public ResponseEntity<ApiResponse<AccountingPeriodResponseDTO>> closePeriod(
             @PathVariable Integer year,
             @PathVariable Integer month,
-            @Valid @RequestBody AccountingPeriodRequest request) {
+            @Valid @RequestBody AccountingPeriodActionRequest request) { // Use the new ActionRequest
 
-        String currentUser = "system"; // TODO: Integration with SecurityContext
+        String currentUser = "system";
         AccountingPeriodResponseDTO period = service.closePeriod(year, month, currentUser, request.getNotes());
-
-        return ResponseEntity.ok(new ApiResponse<>(
-                String.format("Period %d-%02d closed successfully", year, month),
-                true,
-                period
-        ));
+        return ResponseEntity.ok(new ApiResponse<>("Period closed", true, period));
     }
 
     /**
      * Closes a full fiscal year (Annual close).
-     * New endpoint based on the database changes we made.
      */
     @PostMapping("/{year}/close-year")
-    @Operation(summary = "Close fiscal year", description = "Finalizes the entire year. No periods within this year can be modified.")
+    @Operation(summary = "Close fiscal year")
     public ResponseEntity<ApiResponse<Void>> closeYear(
             @PathVariable Integer year,
-            @Valid @RequestBody AccountingPeriodRequest request) {
+            @Valid @RequestBody AccountingPeriodActionRequest request) { // Consistent UI
 
         String currentUser = "system";
         service.closeYear(year, currentUser, request.getNotes());
-
-        return ResponseEntity.ok(new ApiResponse<>(
-                String.format("Fiscal year %d closed successfully", year),
-                true,
-                null
-        ));
+        return ResponseEntity.ok(new ApiResponse<>("Fiscal year locked", true, null));
     }
 
     /**
@@ -134,4 +124,25 @@ public class AccountingPeriodController {
                 period
         ));
     }
+
+    /**
+     * Reopens a closed fiscal year.
+     */
+    @PostMapping("/{year}/reopen-year")
+    @Operation(summary = "Reopen fiscal year", description = "Removes the annual seal. Individual closed months will remain closed.")
+    public ResponseEntity<ApiResponse<Void>> reopenYear(
+            @PathVariable Integer year,
+            @Valid @RequestBody AccountingPeriodActionRequest request) {
+
+        String currentUser = "system"; // TODO: SecurityContext
+        service.reopenYear(year, currentUser, request.getNotes());
+
+        return ResponseEntity.ok(new ApiResponse<>(
+                String.format("Fiscal year %d unsealed successfully", year),
+                true,
+                null
+        ));
+    }
+
+
 }
