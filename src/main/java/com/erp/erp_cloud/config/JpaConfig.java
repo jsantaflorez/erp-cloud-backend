@@ -6,21 +6,29 @@ import org.springframework.data.domain.AuditorAware;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 import java.util.Optional;
 
-@Configuration
-/* * Enable JPA Auditing and link it to the auditorProvider bean.
- * This is what triggers the @CreatedBy and @LastModifiedBy annotations.
+/**
+ * Main JPA and Persistence configuration class for ERP Cloud.
+ * Centralizes the auditing infrastructure and binds it to numeric User IDs.
  */
-@EnableJpaAuditing(auditorAwareRef = "auditorProvider")
+@Configuration
+@EnableJpaAuditing(auditorAwareRef = "jpaAuditorProvider") // Links directly to the bean below
 public class JpaConfig {
 
     /**
-     * Component that provides the current user to the auditing infrastructure.
-     * Currently returns "SYSTEM" as a fallback until JWT/Security is implemented.
-     * * @return The username of the current actor.
+     * Core component that feeds the current acting user's ID to Spring Data JPA lifecycle events.
+     * Populates @CreatedBy and @LastModifiedBy automatically.
+     * * @return An AuditorAware implementation tracking user IDs as Long.
      */
     @Bean
-    public AuditorAware<String> auditorProvider() {
-        return () -> Optional.of("SYSTEM");
-        // Logic: Java Lambda that implements the getCurrentAuditor() method
+    public AuditorAware<Long> jpaAuditorProvider() {
+        /*
+         * TODO: POST-AUTHENTICATION PHASE
+         * Once the JWT filter is ready, we will update this lambda expression to fetch
+         * the authenticated user principal from SecurityContextHolder.getContext().getAuthentication()
+         */
+
+        // FIXME: TEMPORARY BOOTSTRAP PHASE
+        // Returns hardcoded User ID 1L (System Admin) to match our database BIGINT refactoring.
+        return () -> Optional.of(1L);
     }
 }

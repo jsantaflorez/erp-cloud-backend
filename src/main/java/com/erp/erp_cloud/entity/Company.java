@@ -3,6 +3,8 @@ package com.erp.erp_cloud.entity;
 import com.erp.erp_cloud.enums.TaxRegime;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.RelationTargetAuditMode;
 
 import java.io.Serializable;
 
@@ -14,6 +16,7 @@ import java.io.Serializable;
                 @UniqueConstraint(columnNames = {"tenant_id"})
         }
 )
+
 @Getter
 @Setter
 @NoArgsConstructor
@@ -61,10 +64,11 @@ public class Company implements Serializable {
     // =====================
 
 
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "city_id", nullable = false)
+    // @Audited(targetAuditMode = RelationTargetAuditMode.NOT_AUDITED)
     private City city;
-
 
 
     // =====================
@@ -88,6 +92,7 @@ public class Company implements Serializable {
     private String tenantId;
 
     @Column(name = "active", nullable = false)
+    @Builder.Default
     private Boolean active = true;
 
     @Column(name = "logo_url")

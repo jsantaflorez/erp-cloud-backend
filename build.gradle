@@ -47,6 +47,9 @@ dependencies {
 
     //Hibernate Envers for Automated Auditing
 	implementation 'org.hibernate.orm:hibernate-envers'
+
+	// Spring Security Starter Core Engine
+	implementation 'org.springframework.boot:spring-boot-starter-security'
 }
 
 
