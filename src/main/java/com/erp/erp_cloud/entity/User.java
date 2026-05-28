@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.envers.Audited;
 import org.hibernate.envers.NotAudited;
+import java.util.HashSet;
+import java.util.Set;
 
 import java.time.LocalDateTime;
 
@@ -47,7 +49,19 @@ public class User extends BaseEntity {
     private boolean mfaEnabled = false;
     private String mfaSecret;
 
+
+    @NotAudited
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
+    private Set<UserRole> userRoles = new HashSet<>();
+
+
+
+
     public String getFullName() {
         return String.format("%s %s", firstName, lastName);
+
     }
+
+
+
 }
