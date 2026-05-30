@@ -8,9 +8,12 @@ import lombok.Setter;
 import org.hibernate.envers.Audited;
 import org.hibernate.envers.NotAudited;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
 import java.time.LocalDateTime;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 
 @Entity
@@ -54,12 +57,10 @@ public class User extends BaseEntity {
     @OneToMany(mappedBy = "user", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
     private Set<UserRole> userRoles = new HashSet<>();
 
-
-
-
     public String getFullName() {
-        return String.format("%s %s", firstName, lastName);
-
+        return Stream.of(firstName, lastName)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(" "));
     }
 
 

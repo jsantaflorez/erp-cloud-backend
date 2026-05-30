@@ -126,4 +126,11 @@ public class JwtTokenProvider {
         }
         return false;
     }
+
+    /**
+     * Exposes the internal cryptographic expiration lifespan configuration setting.
+     */
+    public long getJwtExpirationInMs() {
+        return this.jwtExpirationInMs;
+    }
 }

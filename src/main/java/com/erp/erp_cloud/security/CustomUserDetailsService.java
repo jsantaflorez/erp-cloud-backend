@@ -4,22 +4,16 @@ import com.erp.erp_cloud.entity.User;
 import com.erp.erp_cloud.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.MalformedJwtException;
-import io.jsonwebtoken.UnsupportedJwtException;
-import io.jsonwebtoken.security.SignatureException;
-import javax.crypto.SecretKey;
-
+import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -28,40 +22,81 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     private final UserRepository userRepository;
 
+    /**
+     * Locates the user identity context based on a unified multi-tenant principal string.
+     * Expects the format: "email|companyId"
+     */
     @Override
     @Transactional(readOnly = true)
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        Long contextCompanyId = resolveCompanyId(email);
-        log.debug("Loading user: {} for companyId: {}", email, contextCompanyId);
+    public UserDetails loadUserByUsername(String unifiedPrincipal) throws UsernameNotFoundException {
 
-        // 1. Fetch user using the optimized FETCH query to avoid N+1 issues
-        User user = userRepository.findByEmailWithRoles(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
+        // 1. Validates and parses the combined multi-tenant parameter structure
+        if (unifiedPrincipal == null || !unifiedPrincipal.contains("|")) {
+            log.warn("AUTH_FAIL | reason: MALFORMED_PRINCIPAL");
+            throw new UsernameNotFoundException("Invalid identity credentials format context.");
+        }
 
-        // 2. Extract role codes assigned to the user within the current tenant context
-        Set<String> roleCodes = user.getUserRoles().stream()
-                .filter(ur -> ur.getCompany().getId().equals(contextCompanyId))
-                .map(ur -> ur.getRole().getCode())
-                .collect(Collectors.toSet());
+        String[] parts = unifiedPrincipal.split("\\|");
+        if (parts.length != 2) {
+            log.warn("AUTH_FAIL | reason: PRINCIPAL_SPLIT_MISMATCH");
+            throw new UsernameNotFoundException("Invalid identity credentials format context.");
+        }
 
-        // 3. Extract standard permission string codes from database
-        Set<String> permissionCodes = userRepository.findPermissionCodesByEmailAndCompanyId(email, contextCompanyId);
+        String email = parts[0];
+        Long companyId;
 
-        log.debug("Roles loaded for {}: {}", email, roleCodes);
-        log.debug("Permissions loaded for {}: {}", email, permissionCodes);
+        try {
+            companyId = Long.parseLong(parts[1]);
+        } catch (NumberFormatException ex) {
+            log.warn("AUTH_FAIL | reason: INVALID_COMPANY_ID_FORMAT");
+            throw new UsernameNotFoundException("Invalid identity credentials format context.");
+        }
 
-        // 4. Return fully populated principal for Spring Security validation engine
-        return new UserPrincipal(user, contextCompanyId, roleCodes, permissionCodes);
-    }
+        log.debug("AUTH_ATTEMPT | identityHash: {} | tenant: {}", email.hashCode(), companyId);
 
-    /**
-     * Resolves the current company ID context for the login request execution thread.
-     */
-    private Long resolveCompanyId(String email) {
-        // Phase 1 (Current): Hardcoded fallback value matching local seed 'tenant-demo' (ID = 4)
-        return 4L;
+        // 2. Single database round-trip: User + UserRoles + Roles + Permissions
+        User user = userRepository.findByEmailWithRolesAndPermissions(email)
+                .orElseThrow(() -> {
+                    log.warn("AUTH_FAIL | reason: USER_NOT_FOUND | identityHash: {}", email.hashCode());
+                    return new UsernameNotFoundException("Unauthorized identity criteria match rejected.");
+                });
 
-        // Phase 2 (JWT Implementation): Will resolve dynamically from Request Context / JWT claims
-        // return TenantContext.getCurrentTenant();
+        // 3. Defensive security state checks
+        if (!user.isActive()) {
+            log.warn("AUTH_FAIL | reason: USER_INACTIVE | identityHash: {}", email.hashCode());
+            throw new UsernameNotFoundException("Unauthorized identity criteria match rejected.");
+        }
+
+        if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(LocalDateTime.now())) {
+            log.warn("AUTH_FAIL | reason: ACCOUNT_LOCKED | identityHash: {} | lockedUntil: {}",
+                    email.hashCode(), user.getLockedUntil());
+            throw new LockedException("Unauthorized identity criteria match rejected.");
+        }
+
+        // 4. Extract roles and permissions from the fetched graph,
+        //    strictly scoped to the target companyId — all in memory, zero extra queries
+        Set<String> roleCodes = new HashSet<>();
+        Set<String> permissionCodes = new HashSet<>();
+
+        user.getUserRoles().stream()
+                .filter(ur -> ur.getCompany().getId().equals(companyId))
+                .forEach(ur -> {
+                    roleCodes.add("ROLE_" + ur.getRole().getCode());
+                    ur.getRole().getPermissions()
+                            .forEach(p -> permissionCodes.add(p.getCode()));
+                });
+
+        // 5. Multi-tenant barrier: user exists but has no role in the target company
+        if (roleCodes.isEmpty()) {
+            log.warn("AUTH_FAIL | reason: NO_COMPANY_ROLE | identityHash: {} | tenant: {}",
+                    email.hashCode(), companyId);
+            throw new UsernameNotFoundException("Unauthorized identity criteria match rejected.");
+        }
+
+        log.debug("AUTH_SUCCESS | identityHash: {} | tenant: {} | roles: {} | permissions: {}",
+                email.hashCode(), companyId, roleCodes.size(), permissionCodes.size());
+
+        // 6. Returns the finalized principal populated from real persistent database data
+        return new UserPrincipal(user, companyId, roleCodes, permissionCodes);
     }
 }

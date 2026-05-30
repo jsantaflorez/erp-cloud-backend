@@ -12,23 +12,29 @@ import java.util.Set;
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    Optional<String> findByEmail(String email);
+    Optional<User> findByEmail(String email);
 
     /**
-     * Prevents N+1 query problems by eagerly fetching user roles and associated roles in a single database round-trip.
+     * Single database round-trip: fetches User + UserRoles + Roles + Permissions.
+     * Eliminates N+1 and the need for a separate permission query at login time.
      */
-    @Query("SELECT u FROM User u " +
+    @Query("SELECT DISTINCT u FROM User u " +
             "LEFT JOIN FETCH u.userRoles ur " +
             "LEFT JOIN FETCH ur.role r " +
+            "LEFT JOIN FETCH r.permissions p " +
             "WHERE u.email = :email")
-    Optional<User> findByEmailWithRoles(@Param("email") String email);
+    Optional<User> findByEmailWithRolesAndPermissions(@Param("email") String email);
 
     /**
-     * Extracts only the string codes of the permissions assigned to the user within a specific company context.
+     * Fallback option: kept as a lightweight alternative if the full fetch
+     * proves too heavy for users with many roles and permissions.
+     * @deprecated Prefer findByEmailWithRolesAndPermissions for the login flow.
      */
+    @Deprecated
     @Query("SELECT p.code FROM UserRole ur " +
             "JOIN ur.role r " +
             "JOIN r.permissions p " +
             "WHERE ur.user.email = :email AND ur.company.id = :companyId")
-    Set<String> findPermissionCodesByEmailAndCompanyId(@Param("email") String email, @Param("companyId") Long companyId);
+    Set<String> findPermissionCodesByEmailAndCompanyId(@Param("email") String email,
+                                                       @Param("companyId") Long companyId);
 }
