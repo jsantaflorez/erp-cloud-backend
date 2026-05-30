@@ -1,39 +1,59 @@
 package com.erp.erp_cloud.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
+
 /**
- * A generic standardized response wrapper.
+ * Generic standardized response wrapper for all API endpoints.
+ * Includes traceability fields (correlationId, path, timestamp)
+ * to support frontend error handling and distributed log correlation.
+ *
  * @param <T> The type of the data payload.
  */
-
-
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL) // ← This hides 'data' if it is null
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ApiResponse<T> {
-    private String message;
-    private boolean success;
-    private T data;
-    private LocalDateTime timestamp;      // ← NUEVO (opcional)
-    private String correlationId;         // ← NUEVO (opcional)
 
-    //
+    private String  message;
+    private boolean success;
+    private T       data;
+    private String  path;            // Request URI that originated this response
+    private String  correlationId;   // Trace ID — from X-Correlation-ID header or auto-generated
+    private Instant timestamp;       // UTC — frontend converts to user's local timezone
+
+    /**
+     * Standard constructor — used by success and simple error responses.
+     * Auto-generates correlationId and timestamp.
+     */
     public ApiResponse(String message, boolean success, T data) {
-        this.message = message;
-        this.success = success;
-        this.data = data;
-        this.timestamp = LocalDateTime.now();
+        this.message       = message;
+        this.success       = success;
+        this.data          = data;
         this.correlationId = UUID.randomUUID().toString();
+        this.timestamp     = Instant.now();
     }
 
-    // Optional auxiliary methods
+    /**
+     * Full constructor — used by GlobalExceptionHandler to include
+     * request path and an externally resolved correlationId.
+     */
+    public ApiResponse(String message, boolean success, T data,
+                       String path, String correlationId, Instant timestamp) {
+        this.message       = message;
+        this.success       = success;
+        this.data          = data;
+        this.path          = path;
+        this.correlationId = correlationId;
+        this.timestamp     = timestamp;
+    }
+
+    // ── Static factory methods ────────────────────────────────
+
     public static <T> ApiResponse<T> success(String message, T data) {
         return new ApiResponse<>(message, true, data);
     }
