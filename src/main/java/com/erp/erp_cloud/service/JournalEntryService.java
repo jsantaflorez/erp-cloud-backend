@@ -11,7 +11,7 @@ import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import com.erp.erp_cloud.dto.TrialBalanceLine;
 import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
 
@@ -49,7 +49,7 @@ public class JournalEntryService {
     private final ThirdPartyRepository thirdPartyRepository;
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
     private final AccountingPeriodService accountingPeriodService;
 
     // ═══════════════════════════════════════════════════════════

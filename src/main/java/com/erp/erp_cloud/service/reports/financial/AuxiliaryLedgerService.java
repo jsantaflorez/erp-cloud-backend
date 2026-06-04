@@ -9,7 +9,7 @@ import com.erp.erp_cloud.entity.JournalEntryItem;
 import com.erp.erp_cloud.enums.AccountNature;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,7 +27,7 @@ public class AuxiliaryLedgerService {
 
     private final ChartOfAccountsRepository chartOfAccountsRepository;
     private final JournalEntryRepository journalEntryRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     /**
      * Generates Auxiliary Ledger Report (Libro Auxiliar por Cuenta).

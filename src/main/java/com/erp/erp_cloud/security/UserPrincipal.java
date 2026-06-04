@@ -94,7 +94,8 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public String getPassword() {
-        return password;
+        return this.password;
+
     }
 
     @Override

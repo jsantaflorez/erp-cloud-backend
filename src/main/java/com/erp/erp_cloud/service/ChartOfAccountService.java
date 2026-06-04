@@ -8,7 +8,7 @@ import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -28,7 +28,7 @@ public class ChartOfAccountService {
     private static final Logger log = LoggerFactory.getLogger(ChartOfAccountService.class);
 
     private final ChartOfAccountsRepository repository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     /**
      * Create a new account entry with strict accounting structure validations.

@@ -14,7 +14,7 @@ import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.repository.CityRepository;
 
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,7 +36,7 @@ public class ThirdPartyService {
     private static final Logger log = LoggerFactory.getLogger(ThirdPartyService.class);
 
     private final ThirdPartyRepository thirdPartyRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
     private final CityRepository cityRepository;
     private final CostCenterRepository costCenterRepository;
     private final JournalEntryRepository journalEntryRepository;

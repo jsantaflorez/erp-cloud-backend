@@ -1,33 +1,46 @@
+// TenantFilter.java
 package com.erp.erp_cloud.security.filter;
 
+import com.erp.erp_cloud.dto.ApiResponse;
+import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.security.UserPrincipal;
+import com.erp.erp_cloud.security.context.TenantContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
-
-
-import com.erp.erp_cloud.security.context.CompanyContext;
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class TenantFilter extends OncePerRequestFilter {
 
-    private final CompanyContext companyContext;
+    private final TenantContext tenantContext;
+    private final TenantResolver tenantResolver;
+    private final ObjectMapper objectMapper;
 
-    // 1. Define the whitelist for Swagger and static resources
-    private static final String[] SWAGGER_WHITELIST = {
-            "/v3/api-docs",
-            "/swagger-ui",
-            "/swagger-resources",
-            "/configuration/ui",
-            "/configuration/security"
-    };
+    /**
+     * Bypasses tenant resolution for public endpoints and preflight requests.
+     */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getServletPath();
+        return "OPTIONS".equalsIgnoreCase(request.getMethod())
+                || path.startsWith("/api/auth/")
+                || path.startsWith("/v3/api-docs")
+                || path.startsWith("/swagger-ui")
+                || path.startsWith("/swagger-resources")
+                || path.startsWith("/actuator/health");
+    }
 
     @Override
     protected void doFilterInternal(
@@ -36,57 +49,70 @@ public class TenantFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String path = request.getRequestURI();
+        Long companyId = null;
 
-        // 2. BYPASS: If the request is for Swagger or OPTIONS, let it pass without validation
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod()) || isSwaggerPath(path)) {
-            filterChain.doFilter(request, response);
-            return;
+        // PRIMARY: Extract companyId from the cryptographically signed JWT principal
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication != null
+                && authentication.getPrincipal() instanceof UserPrincipal principal) {
+            companyId = principal.getCompanyId();
+
+        } else {
+            // FALLBACK: X-Tenant-Id header — valid only for unauthenticated public pipelines
+            String headerTenant = request.getHeader("X-Tenant-Id");
+            if (headerTenant != null && !headerTenant.isBlank()) {
+                try {
+                    companyId = Long.parseLong(headerTenant);
+                } catch (NumberFormatException ex) {
+                    log.warn("TENANT_FILTER_BLOCKED | reason: INVALID_TENANT_HEADER_FORMAT | URI: {} {}",
+                            request.getMethod(), request.getRequestURI());
+                    writeErrorResponse(response, "Invalid X-Tenant-Id header format.");
+                    return;
+                }
+            }
         }
 
-        String tenantId = request.getHeader("X-Tenant-Id");
-
-        // 3. Strict validation for all other business endpoints
-        if (tenantId == null || tenantId.isBlank()) {
-            // NOTE: Since the Filter runs before the GlobalExceptionHandler,
-            // we must manually construct and write the response to ensure
-            // consistency with our standardized ApiResponse format.
-
-            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-            response.setContentType("application/json");
-            response.setCharacterEncoding("UTF-8");
-
-            // Manually build the JSON string to match the ApiResponse structure.
-            // This prevents the request from falling back to Spring's default error format.
-            String jsonResponse = "{" +
-                    "\"message\": \"Missing X-Tenant-Id header\"," +
-                    "\"success\": false," +
-                    "\"data\": null" +
-                    "}";
-
-            response.getWriter().write(jsonResponse);
-
-            // Terminate the filter chain execution immediately
+        // STRICT VALIDATION: All business endpoints require a resolved tenant context
+        if (companyId == null) {
+            log.warn("TENANT_FILTER_BLOCKED | reason: MISSING_TENANT_CONTEXT | URI: {} {}",
+                    request.getMethod(), request.getRequestURI());
+            writeErrorResponse(response, "Missing multi-tenant context — JWT claim or X-Tenant-Id header required.");
             return;
         }
 
         try {
-            companyContext.setCurrentCompany(tenantId);
+            // Single DB query per request — wrapped in @Transactional(readOnly = true)
+            Company company = tenantResolver.resolve(companyId);
+
+            // Binds both Company entity and companyId to the current thread
+            tenantContext.setContext(company);
+
+            log.debug("TENANT_FILTER_BOUND | tenant: {} | URI: {} {}",
+                    companyId, request.getMethod(), request.getRequestURI());
+
             filterChain.doFilter(request, response);
+
+        } catch (IllegalStateException ex) {
+            log.warn("TENANT_FILTER_BLOCKED | reason: COMPANY_NOT_FOUND | companyId: {}", companyId);
+            writeErrorResponse(response, "Invalid tenant identifier.");
+
         } finally {
-            companyContext.clear();
+            // Always clear both ThreadLocals — prevents context leaking in thread pools
+            tenantContext.clear();
         }
     }
 
     /**
-     * Helper method to check if the current request is for Swagger documentation.
+     * Writes a structured ApiResponse error JSON directly to the servlet response.
+     * Used when the filter intercepts before GlobalExceptionHandler is reachable.
      */
-    private boolean isSwaggerPath(String path) {
-        for (String whitePath : SWAGGER_WHITELIST) {
-            if (path.startsWith(whitePath)) {
-                return true;
-            }
-        }
-        return false;
+    private void writeErrorResponse(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+        response.getWriter().write(
+                objectMapper.writeValueAsString(ApiResponse.error(message))
+        );
     }
 }

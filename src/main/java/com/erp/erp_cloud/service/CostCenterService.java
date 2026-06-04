@@ -7,7 +7,7 @@ import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.CostCenterRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +23,7 @@ public class CostCenterService {
     private static final Logger log = LoggerFactory.getLogger(CostCenterService.class);
 
     private final CostCenterRepository repository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     /**
      * Retrieves all cost centers for the current company context.

@@ -9,7 +9,7 @@ import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.DocumentTypeRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +27,7 @@ public class DocumentTypeService {
 
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
     @Transactional
     public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
         Company company = companyContext.getCurrentCompany();

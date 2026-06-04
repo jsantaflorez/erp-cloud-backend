@@ -31,8 +31,7 @@ public class SecurityConfig {
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
 
-    @Value("${app.cors.allowed-origins}")
-    private final List<String> allowedOrigins;
+
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -48,7 +47,8 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 // Injects dynamic CORS properties structure
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .cors(cors -> {})
+
 
                 // Disables CSRF protection since our REST API uses stateless JWT authentication tokens
                 .csrf(AbstractHttpConfigurer::disable)
@@ -81,20 +81,5 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /**
-     * Rebuilds web mapping origin validation rules out of property settings values.
-     */
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(allowedOrigins);
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Company-ID"));
-        config.setAllowCredentials(true);
-        config.setMaxAge(3600L); // Caches CORS preflight options evaluations for 1 hour
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return source;
-    }
 }

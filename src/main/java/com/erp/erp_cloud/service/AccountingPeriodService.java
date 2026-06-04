@@ -6,7 +6,7 @@ import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.AccountingPeriodRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +27,7 @@ public class AccountingPeriodService {
     private static final Logger log = LoggerFactory.getLogger(AccountingPeriodService.class);
 
     private final AccountingPeriodRepository repository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     // ═══════════════════════════════════════════════════════════
     // QUERY METHODS (For Controller)

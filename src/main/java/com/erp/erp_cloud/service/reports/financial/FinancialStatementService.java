@@ -7,7 +7,7 @@ import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +28,7 @@ public class FinancialStatementService {
 
     private final JournalEntryRepository journalEntryRepository;
     private final ChartOfAccountsRepository chartOfAccountsRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     // ═══════════════════════════════════════════════════════════
     // BALANCE SHEET

@@ -10,7 +10,7 @@ import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.TaxRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,7 +29,7 @@ public class TaxService {
 
     private final TaxRepository taxRepository;
     private final ChartOfAccountsRepository accountRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     // =====================================================
     // CREATE

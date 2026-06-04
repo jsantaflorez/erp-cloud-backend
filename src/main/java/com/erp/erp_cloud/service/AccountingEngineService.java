@@ -4,7 +4,7 @@ import com.erp.erp_cloud.dto.TaxCalculationResult;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.repository.TaxRepository;
-import com.erp.erp_cloud.security.context.CompanyContext;
+import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,7 +16,7 @@ import java.math.RoundingMode;
 public class AccountingEngineService {
 
     private final TaxRepository taxRepository;
-    private final CompanyContext companyContext;
+    private final TenantContext companyContext;
 
     /**
      * Calculates the tax for a given account and base amount.
