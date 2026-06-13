@@ -21,21 +21,22 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     /**
      * Search journal entries with filters.
      * Excludes logically deleted records (active = false).
+     * ADAPTED: Uses companyId (Long) instead of Company entity.
      */
     @Query(value = "SELECT j FROM JournalEntry j " +
             "JOIN FETCH j.documentType " +
-            "WHERE j.company = :company " +
+            "WHERE j.company.id = :companyId " +
             "AND j.active = true " +
             "AND (:searchTerm IS NULL OR " +
             "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
             "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
             "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
             "AND (:endDate IS NULL OR j.entryDate <= :endDate)",
-            countQuery = "SELECT COUNT(j) FROM JournalEntry j WHERE j.company = :company " +
+            countQuery = "SELECT COUNT(j) FROM JournalEntry j WHERE j.company.id = :companyId " +
                     "AND j.active = true " +
                     "AND (:searchTerm IS NULL OR LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')))")
     Page<JournalEntry> searchEntries(
-            @Param("company") Company company,
+            @Param("companyId") Long companyId,
             @Param("searchTerm") String searchTerm,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
@@ -43,6 +44,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
 
     /**
      * Checks if a third party has associated transactions in active journal entries.
+     * CONSERVED: Keeps original structure since thirdParty entity validation remains intact.
      */
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntry e JOIN e.items item " +
@@ -51,34 +53,35 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
 
     /**
      * Checks for duplicate document numbers.
-     * We use 'AndActiveTrue' to allow reuse of document numbers if the previous
-     * entry was logically deleted (active = false).
+     * ADAPTED: Uses CompanyId instead of Company entity to support multi-tenant native long IDs.
      */
-    boolean existsByCompanyAndDocumentNumberAndActiveTrue(Company company, String documentNumber);
+    boolean existsByCompanyIdAndDocumentNumberAndActiveTrue(Long companyId, String documentNumber);
 
     /**
      * Alias for compatibility with existing Service logic.
-     * Internally calls the ActiveTrue version to maintain data integrity.
+     * ADAPTED: Accepts Long companyId and routes to the updated query method.
      */
-    default boolean existsByCompanyAndDocumentNumber(Company company, String documentNumber) {
-        return existsByCompanyAndDocumentNumberAndActiveTrue(company, documentNumber);
+    default boolean existsByCompanyIdAndDocumentNumber(Long companyId, String documentNumber) {
+        return existsByCompanyIdAndDocumentNumberAndActiveTrue(companyId, documentNumber);
     }
 
     /**
      * Finds an active journal entry by document number.
+     * ADAPTED: Derived query method using CompanyId.
      */
-    Optional<JournalEntry> findByCompanyAndDocumentNumberAndActiveTrue(Company company, String documentNumber);
+    Optional<JournalEntry> findByCompanyIdAndDocumentNumberAndActiveTrue(Long companyId, String documentNumber);
 
     /**
      * Alias for compatibility with existing Service logic.
+     * ADAPTED: Accepts Long companyId and routes to the active-check query method.
      */
-    default Optional<JournalEntry> findByCompanyAndDocumentNumber(Company company, String documentNumber) {
-        return findByCompanyAndDocumentNumberAndActiveTrue(company, documentNumber);
+    default Optional<JournalEntry> findByCompanyIdAndDocumentNumber(Long companyId, String documentNumber) {
+        return findByCompanyIdAndDocumentNumberAndActiveTrue(companyId, documentNumber);
     }
 
     /**
      * Calculates account balances for the Trial Balance report.
-     * Filtering by active = true ensures deleted records don't affect totals.
+     * ADAPTED: Evaluates a.company.id against the primitive Long parameter.
      */
     @Query("""
         SELECT 
@@ -89,7 +92,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         FROM JournalEntryItem i
         JOIN i.account a
         JOIN i.journalEntry je
-        WHERE a.company = :company
+        WHERE a.company.id = :companyId
           AND je.entryDate <= :asOfDate
           AND je.active = true
           AND a.postingAccount = true
@@ -98,19 +101,19 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         ORDER BY a.code
     """)
     List<Object[]> getAccountBalancesAsOfDate(
-            @Param("company") Company company,
+            @Param("companyId") Long companyId,
             @Param("asOfDate") LocalDate asOfDate
     );
 
     /**
      * Retrieves all items for the Auxiliary Ledger.
-     * Includes annulled entries but excludes logically deleted entries.
+     * ADAPTED: Filters via e.company.id utilizing the primitive tenant ID.
      */
     @Query("""
         SELECT i FROM JournalEntry e 
         JOIN e.items i 
         JOIN i.account a 
-        WHERE e.company = :company 
+        WHERE e.company.id = :companyId 
           AND e.active = true 
           AND e.entryDate BETWEEN :startDate AND :endDate 
           AND a.code BETWEEN :startCode AND :endCode 
@@ -118,7 +121,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         ORDER BY a.code ASC, e.entryDate ASC, e.id ASC
     """)
     List<JournalEntryItem> findItemsForAuxiliary(
-            @Param("company") Company company,
+            @Param("companyId") Long companyId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("startCode") String startCode,

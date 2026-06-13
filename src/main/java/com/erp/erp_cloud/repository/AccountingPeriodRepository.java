@@ -13,6 +13,10 @@ import java.util.Optional;
 @Repository
 public interface AccountingPeriodRepository extends JpaRepository<AccountingPeriod, Long> {
 
+    // ═══════════════════════════════════════════════════════════
+    // LEGACY METHODS (Object-based for backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+
     /**
      * Finds a specific period by company, year, and month.
      */
@@ -49,9 +53,30 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
      * Checks if a period exists for a specific month.
      */
     boolean existsByCompanyAndYearAndMonth(Company company, Integer year, Integer month);
+
     /**
      * Retrieves all period records for a specific year.
      * Useful for bulk operations like unsealing a fiscal year.
      */
     List<AccountingPeriod> findByCompanyAndYear(Company company, Integer year);
+
+    // ═══════════════════════════════════════════════════════════
+    // ADAPTED TENANT METHODS (Primitive ID-based for optimization)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * ADAPTED: Finds a specific period by company primitive ID, year, and month.
+     */
+    Optional<AccountingPeriod> findByCompanyIdAndYearAndMonth(Long companyId, Integer year, Integer month);
+
+    /**
+     * ADAPTED CRITICAL: Checks if a Fiscal Year is locked (Annual Close) using the company primitive ID.
+     * Navigates directly through the foreign key parameter to avoid overhead.
+     */
+    @Query("SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END " +
+            "FROM AccountingPeriod p " +
+            "WHERE p.company.id = :companyId " +
+            "AND p.year = :year " +
+            "AND p.yearClose = true")
+    boolean existsByCompanyIdAndYearAndYearCloseTrue(@Param("companyId") Long companyId, @Param("year") Integer year);
 }

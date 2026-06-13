@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
  * - TenantFilter uses setCurrentTenant(Long) — zero DB queries, pure JWT claim binding.
  * - Existing accounting services use getCurrentCompany() — entity available when set via setContext(Company).
  */
-@Component
 public class TenantContext {
 
     private static final ThreadLocal<Company> CURRENT_COMPANY   = new ThreadLocal<>();
@@ -22,7 +21,7 @@ public class TenantContext {
      * getCurrentCompany() will throw if called after this method,
      * since the Company entity is not loaded.
      */
-    public void setCurrentTenant(Long companyId) {
+    public static void setCurrentTenant(Long companyId) {
         CURRENT_TENANT_ID.set(companyId);
     }
 
@@ -31,7 +30,7 @@ public class TenantContext {
      * Used by flows that have already loaded the Company from the database
      * and need to make it available to accounting services downstream.
      */
-    public void setContext(Company company) {
+    public static void setContext(Company company) {
         CURRENT_COMPANY.set(company);
         CURRENT_TENANT_ID.set(company.getId());
     }
@@ -41,7 +40,7 @@ public class TenantContext {
      * Only available if setContext(Company) was called upstream.
      * Throws if only setCurrentTenant(Long) was used.
      */
-    public Company getCurrentCompany() {
+    public static Company getCurrentCompany() {
         Company company = CURRENT_COMPANY.get();
         if (company == null) {
             throw new IllegalStateException(
@@ -55,7 +54,7 @@ public class TenantContext {
      * Returns the companyId bound to the current thread.
      * Available regardless of which setter was used.
      */
-    public Long getCurrentTenant() {
+    public static Long getCurrentTenant() {
         Long tenantId = CURRENT_TENANT_ID.get();
         if (tenantId == null) {
             throw new IllegalStateException(
@@ -70,7 +69,7 @@ public class TenantContext {
      * Must be called in the finally block of TenantFilter to prevent memory leaks
      * in thread-pooled servlet containers.
      */
-    public void clear() {
+    public static void clear() {
         CURRENT_COMPANY.remove();
         CURRENT_TENANT_ID.remove();
     }

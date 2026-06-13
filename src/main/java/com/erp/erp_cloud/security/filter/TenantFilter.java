@@ -24,7 +24,7 @@ import java.io.IOException;
 @RequiredArgsConstructor
 public class TenantFilter extends OncePerRequestFilter {
 
-    private final TenantContext tenantContext;
+    // private final TenantContext tenantContext;
     private final TenantResolver tenantResolver;
     private final ObjectMapper objectMapper;
 
@@ -85,8 +85,10 @@ public class TenantFilter extends OncePerRequestFilter {
             // Single DB query per request — wrapped in @Transactional(readOnly = true)
             Company company = tenantResolver.resolve(companyId);
 
+
             // Binds both Company entity and companyId to the current thread
-            tenantContext.setContext(company);
+            TenantContext.setContext(company);
+
 
             log.debug("TENANT_FILTER_BOUND | tenant: {} | URI: {} {}",
                     companyId, request.getMethod(), request.getRequestURI());
@@ -99,7 +101,7 @@ public class TenantFilter extends OncePerRequestFilter {
 
         } finally {
             // Always clear both ThreadLocals — prevents context leaking in thread pools
-            tenantContext.clear();
+            TenantContext.clear();
         }
     }
 

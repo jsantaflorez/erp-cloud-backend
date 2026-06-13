@@ -89,20 +89,6 @@ public class AuthController {
                 ApiResponse.success("Authentication successful.", authResponse)
         );
     }
-//    @Autowired
-//    private com.erp.erp_cloud.repository.UserRepository tempUserRepository;
-//    @Autowired
-//    private org.springframework.security.crypto.password.PasswordEncoder tempEncoder;
-//
-//    @GetMapping("/reset-admin") // <--- Solo dejamos la pieza final del path
-//    @org.springframework.transaction.annotation.Transactional
-//    public String resetAdminPassword() {
-//        tempUserRepository.findByEmailWithRolesAndPermissions("admin@erpcloud.com").ifPresent(user -> {
-//            // Encripta nativamente usando el encoder real de tu Spring Boot
-//            user.setPasswordHash(tempEncoder.encode("Admin123!"));
-//            tempUserRepository.save(user);
-//        });
-//        return "Contraseña de Admin reseteada exitosamente en Java a: Admin123!";
-//    }
+
 
 }

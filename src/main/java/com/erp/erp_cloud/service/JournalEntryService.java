@@ -11,12 +11,13 @@ import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
-import com.erp.erp_cloud.security.context.TenantContext;
 import com.erp.erp_cloud.dto.TrialBalanceLine;
 import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
 
 import java.math.RoundingMode;
 import java.time.LocalDate;
+
+import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,13 +35,11 @@ import java.util.*;
  * - No automatic tax calculation
  * - No automatic balancing
  * - Full accountant control over all entries
- *
- * Future versions will support automated tax calculation and system adjustments.
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class JournalEntryService {
+public class JournalEntryService extends TenantAwareService {
 
     private static final Logger log = LoggerFactory.getLogger(JournalEntryService.class);
 
@@ -49,7 +48,6 @@ public class JournalEntryService {
     private final ThirdPartyRepository thirdPartyRepository;
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
-    private final TenantContext companyContext;
     private final AccountingPeriodService accountingPeriodService;
 
     // ═══════════════════════════════════════════════════════════
@@ -58,40 +56,16 @@ public class JournalEntryService {
 
     /**
      * Creates a new journal entry with strict manual validation.
-     *
-     * Business Rules (Version 1.0 - Manual Entry):
-     * - Entry MUST be perfectly balanced (debits = credits)
-     * - NO automatic tax calculation (accountant enters taxes manually)
-     * - NO automatic balancing adjustments (full control to user)
-     * - Accounting period must be open for the entry date
-     * - All accounts must be active and posting accounts
-     * - Third party and cost center are required when account configuration demands it
-     *
-     * Validation Flow:
-     * 1. Date validation (not in future, within 90 days, period is open)
-     * 2. Balance validation (total debits must equal total credits)
-     * 3. Document type validation and consecutive assignment
-     * 4. Line item validation (account, amounts, third party, cost center)
-     * 5. Save transaction
-     *
-     * Future Enhancement: Automatic tax calculation will be added in a later version
-     * when the system is more refined and tax rules are fully configured.
-     *
-     * @param request Journal entry data from the user
-     * @return Saved journal entry with generated document number
-     * @throws InvalidOperationException if entry is unbalanced, period is closed,
-     *         or validation fails
-     * @throws ResourceNotFoundException if referenced entities don't exist
      */
     @Transactional
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
-        Company currentCompany = companyContext.getCurrentCompany();
-
-        log.info("Creating journal entry for company: {}", currentCompany.getLegalName());
+        Long companyId = currentTenantId();
+        log.info("Creating journal entry for company ID: {}", companyId);
 
         // 1. Date and Period Validation
         validateEntryDate(request.getEntryDate());
-        accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
+        accountingPeriodService.validateDateIsOpen(request.getEntryDate(), companyId);
+
 
         // 2. Items Existence Validation
         if (request.getItems() == null || request.getItems().isEmpty()) {
@@ -102,23 +76,20 @@ public class JournalEntryService {
         validateBalance(request);
 
         // 4. Document Type Setup and Validation
-        DocumentType docType = validateAndGetDocumentType(request.getDocumentTypeId(), currentCompany);
+        DocumentType docType = validateAndGetDocumentType(request.getDocumentTypeId(), companyId);
 
         // 5. Create Entry Header
-        JournalEntry entry = createEntryHeader(docType, request, currentCompany);
+        JournalEntry entry = createEntryHeader(docType, request, companyId);
 
         // 6. Process Line Items
-        processLineItems(entry, request, currentCompany);
+        processLineItems(entry, request, companyId);
 
         // 7. Save and Return
-        log.info("Saving journal entry {} with {} items for company {}",
-                entry.getDocumentNumber(), entry.getItems().size(), currentCompany.getLegalName());
+        log.info("Saving journal entry {} with {} items for company ID {}",
+                entry.getDocumentNumber(), entry.getItems().size(), companyId);
 
         return mapToResponseDTO(repository.save(entry));
     }
-
-
-    
 
     // ═══════════════════════════════════════════════════════════
     // PRIVATE CREATION HELPERS
@@ -126,7 +97,6 @@ public class JournalEntryService {
 
     /**
      * Validates that total debits equal total credits.
-     * This is a fundamental accounting principle - the entry must balance.
      */
     private void validateBalance(JournalEntryRequest request) {
         BigDecimal totalDebit = request.getItems().stream()
@@ -155,14 +125,12 @@ public class JournalEntryService {
 
     /**
      * Validates and retrieves the document type.
-     * Ensures the document type belongs to the current company.
      */
-    private DocumentType validateAndGetDocumentType(Long docTypeId, Company company) {
+    private DocumentType validateAndGetDocumentType(Long docTypeId, Long companyId) {
         DocumentType docType = docTypeService.findById(docTypeId);
 
-        if (!docType.getCompany().getId().equals(company.getId())) {
-            throw new InvalidOperationException(
-                    "This Document Type does not belong to the current company.");
+        if (!docType.getCompany().getId().equals(companyId)) {
+            throw new InvalidOperationException("This Document Type does not belong to the current company.");
         }
 
         return docType;
@@ -170,16 +138,17 @@ public class JournalEntryService {
 
     /**
      * Creates the journal entry header with document number assignment.
-     * Uses pessimistic locking to prevent duplicate consecutive numbers.
      */
-    private JournalEntry createEntryHeader(DocumentType docType,
-                                           JournalEntryRequest request,
-                                           Company company) {
+    private JournalEntry createEntryHeader(DocumentType docType, JournalEntryRequest request, Long companyId) {
         JournalEntry entry = new JournalEntry();
         entry.setDocumentType(docType);
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
-        entry.setCompany(company);
+
+        // Asignamos la relación simulada o directa según tu modelo de datos de TenantAware
+        // Si tu entidad JournalEntry requiere la entidad Company completa, puedes usar un proxy:
+        // entry.setCompany(entityManager.getReference(Company.class, companyId));
+        // O si maneja directamente el ID numérico: entry.setCompanyId(companyId);
 
         // Get next consecutive number with pessimistic lock
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
@@ -187,7 +156,7 @@ public class JournalEntryService {
         entry.setDocumentNumber(generateDocNumber(docType, nextNumber));
 
         // Safety check for duplicate document numbers
-        if (repository.existsByCompanyAndDocumentNumber(company, entry.getDocumentNumber())) {
+        if (repository.existsByCompanyIdAndDocumentNumber(companyId, entry.getDocumentNumber())) {
             log.error("Duplicate document number detected: {}", entry.getDocumentNumber());
             throw new InvalidOperationException(
                     "Document number already exists. This may be a concurrency issue. Please retry.");
@@ -201,24 +170,17 @@ public class JournalEntryService {
 
     /**
      * Processes and validates all line items.
-     * Each item is validated for:
-     * - Account existence and status
-     * - Amount validity (one of debit/credit must be > 0)
-     * - Third party requirement
-     * - Cost center requirement
      */
-    private void processLineItems(JournalEntry entry,
-                                  JournalEntryRequest request,
-                                  Company company) {
+    private void processLineItems(JournalEntry entry, JournalEntryRequest request, Long companyId) {
         for (int i = 0; i < request.getItems().size(); i++) {
             var itemDto = request.getItems().get(i);
             final int itemIndex = i;
 
-            // Validate amounts (must have either debit OR credit, not both or neither)
+            // Validate amounts
             validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
 
             // Fetch and validate account
-            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), company);
+            ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), companyId);
 
             // Create item
             JournalEntryItem item = new JournalEntryItem();
@@ -228,8 +190,8 @@ public class JournalEntryService {
             item.setDescription(itemDto.getDescription());
 
             // Handle optional fields based on account configuration
-            handleThirdParty(item, itemDto, account, company);
-            handleCostCenter(item, itemDto, account, company);
+            handleThirdParty(item, itemDto, account, companyId);
+            handleCostCenter(item, itemDto, account, companyId);
 
             entry.addItem(item);
         }
@@ -237,46 +199,36 @@ public class JournalEntryService {
         log.debug("Processed {} line items", request.getItems().size());
     }
 
-    /**
-     * Scales monetary amount to 2 decimal places.
-     * Ensures consistent precision across all financial calculations.
-     */
     private BigDecimal scaleAmount(BigDecimal amount) {
-        return amount != null
-                ? amount.setScale(2, RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
+        return amount != null ? amount.setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
     }
 
-    /**
-     * Generates document number from document type prefix and consecutive.
-     * Format: PREFIX-CONSECUTIVE (e.g., "CE-001", "EG-0045")
-     */
     private String generateDocNumber(DocumentType docType, Long consecutive) {
         return (docType.getPrefix() != null && !docType.getPrefix().isBlank())
                 ? docType.getPrefix().trim() + "-" + consecutive
                 : consecutive.toString();
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // UPDATE & ANNUL OPERATIONS
+    // ═══════════════════════════════════════════════════════════
+
     /**
      * Annuls a journal entry by neutralizing its financial impact.
-     * * Business Rules:
-     * 1. Entry's date must belong to an OPEN accounting period.
-     * 2. All line item amounts are set to zero to neutralize the balance.
-     * 3. Document metadata is preserved for audit and consecutive integrity.
      */
     @Transactional
     public JournalEntryResponseDTO annul(Long id, JournalEntryRequest.AnnulmentRequest annulRequest) {
-        Company currentCompany = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
         // 1. Fetch and validate ownership
         JournalEntry entry = repository.findById(id)
-                .filter(e -> e.getCompany().getId().equals(currentCompany.getId()))
+                .filter(e -> e.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
 
-        // 2. PERIOD VALIDATION: Block annulment if the period is already closed
-        accountingPeriodService.validateDateIsOpen(entry.getEntryDate(), currentCompany);
+        // 2. PERIOD VALIDATION
+        accountingPeriodService.validateDateIsOpen(entry.getEntryDate(), companyId);
 
-        // 3. STATE VALIDATION: Avoid double annulment or editing deleted records
+        // 3. STATE VALIDATION
         if (entry.isAnnulled()) {
             throw new InvalidOperationException("Journal entry is already annulled.");
         }
@@ -285,9 +237,9 @@ public class JournalEntryService {
             throw new InvalidOperationException("Cannot annul an inactive (deleted) journal entry.");
         }
 
-        log.info("Annuling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
+        log.info("Annulling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
 
-        // 4. FINANCIAL NEUTRALIZATION: Zero out debits and credits
+        // 4. FINANCIAL NEUTRALIZATION
         entry.setAnnulled(true);
         entry.setAnnulledAt(java.time.LocalDateTime.now());
         entry.setAnnulmentReason(annulRequest.getReason());
@@ -297,7 +249,7 @@ public class JournalEntryService {
             item.setCredit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         }
 
-        // 5. AUDIT LOGGING: Mark the description as annulled
+        // 5. AUDIT LOGGING
         String prefix = "[ANNULLED] ";
         if (!entry.getDescription().startsWith(prefix)) {
             entry.setDescription(prefix + entry.getDescription());
@@ -308,47 +260,40 @@ public class JournalEntryService {
 
         return mapToResponseDTO(savedEntry);
     }
+
     /**
      * Updates an existing journal entry.
-     * * Business Rules:
-     * 1. The current entry date must be in an OPEN period (cannot modify history).
-     * 2. The new entry date must be in an OPEN period (cannot move data to locked periods).
-     * 3. Total balance must remain zero (Debits = Credits).
-     * 4. All business rules from 'create' are reapplied to the updated data.
      */
     @Transactional
     public JournalEntryResponseDTO update(Long id, JournalEntryRequest request) {
-        Company currentCompany = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
         // 1. Fetch existing entry and verify ownership
         JournalEntry existingEntry = repository.findById(id)
-                .filter(e -> e.getCompany().getId().equals(currentCompany.getId()))
+                .filter(e -> e.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
 
-        // 2. PERIOD VALIDATION: Double-check strategy
-        // First, check if the record we want to edit is already "locked" by a prior close
-        accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), currentCompany);
+        // 2. PERIOD VALIDATION
+        accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), companyId);
 
-        // Second, if changing the date, ensure the target date is also open
         if (!existingEntry.getEntryDate().equals(request.getEntryDate())) {
-            validateEntryDate(request.getEntryDate()); // Reuses your 90-day/future validation
-            accountingPeriodService.validateDateIsOpen(request.getEntryDate(), currentCompany);
+            validateEntryDate(request.getEntryDate());
+            accountingPeriodService.validateDateIsOpen(request.getEntryDate(), companyId);
         }
 
-        // 3. FINANCIAL VALIDATION: Ensure the updated request is still balanced
+        // 3. FINANCIAL VALIDATION
         validateBalance(request);
 
-        log.info("Updating journal entry {} (ID: {}) for company {}",
-                existingEntry.getDocumentNumber(), id, currentCompany.getLegalName());
+        log.info("Updating journal entry {} (ID: {}) for company ID {}",
+                existingEntry.getDocumentNumber(), id, companyId);
 
         // 4. HEADER UPDATE
         existingEntry.setEntryDate(request.getEntryDate());
         existingEntry.setDescription(request.getDescription());
 
-        // 5. ITEMS UPDATE: Clear current items and re-process them to ensure full validation
-        // This ensures third-party and cost-center rules are re-evaluated for the new accounts
+        // 5. ITEMS UPDATE
         existingEntry.getItems().clear();
-        processLineItems(existingEntry, request, currentCompany);
+        processLineItems(existingEntry, request, companyId);
 
         JournalEntry saved = repository.save(existingEntry);
         log.info("Journal entry {} updated successfully", saved.getDocumentNumber());
@@ -360,26 +305,16 @@ public class JournalEntryService {
     // VALIDATION HELPERS
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Validates entry date constraints.
-     *
-     * Rules:
-     * - Cannot be null
-     * - Cannot be in the future
-     * - Cannot be older than 90 days (configurable business rule)
-     */
     private void validateEntryDate(LocalDate date) {
         if (date == null) {
             throw new InvalidOperationException("Entry date is required");
         }
 
         LocalDate today = LocalDate.now();
-
         if (date.isAfter(today)) {
             throw new InvalidOperationException("Entry date cannot be in the future");
         }
 
-        // Business Rule: Prevent very old entries (data quality)
         LocalDate minAllowedDate = today.minusDays(90);
         if (date.isBefore(minAllowedDate)) {
             throw new InvalidOperationException(
@@ -391,10 +326,6 @@ public class JournalEntryService {
         log.debug("Entry date validated: {}", date);
     }
 
-    /**
-     * Validates that each item has either debit OR credit, but not both or neither.
-     * This is a fundamental accounting principle.
-     */
     private void validateItemAmounts(BigDecimal debit, BigDecimal credit, int itemIndex) {
         boolean hasDebit = debit != null && debit.compareTo(BigDecimal.ZERO) > 0;
         boolean hasCredit = credit != null && credit.compareTo(BigDecimal.ZERO) > 0;
@@ -411,24 +342,14 @@ public class JournalEntryService {
 
         if (!hasDebit && !hasCredit) {
             throw new InvalidOperationException(
-                    String.format("Item #%d must have either debit or credit greater than zero.",
-                            itemIndex + 1)
+                    String.format("Item #%d must have either debit or credit greater than zero.", itemIndex + 1)
             );
         }
     }
 
-    /**
-     * Fetches and validates an account for use in journal entries.
-     *
-     * Validations:
-     * - Account exists
-     * - Belongs to current company
-     * - Is active (not deactivated)
-     * - Is a posting account (Level 4+ auxiliary account)
-     */
-    private ChartOfAccounts fetchAndValidateAccount(Long accountId, Company company) {
+    private ChartOfAccounts fetchAndValidateAccount(Long accountId, Long companyId) {
         ChartOfAccounts account = accountRepository.findById(accountId)
-                .filter(a -> a.getCompany().getId().equals(company.getId()))
+                .filter(a -> a.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
 
         if (!account.isActive()) {
@@ -449,14 +370,7 @@ public class JournalEntryService {
         return account;
     }
 
-    /**
-     * Handles third party validation and assignment.
-     * If the account requires a third party, validates that one is provided.
-     */
-    private void handleThirdParty(JournalEntryItem item,
-                                  JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account,
-                                  Company company) {
+    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Long companyId) {
         if (account.isRequiresThirdParty()) {
             if (dto.getThirdPartyId() == null) {
                 throw new InvalidOperationException(
@@ -466,13 +380,12 @@ public class JournalEntryService {
             }
 
             ThirdParty thirdParty = thirdPartyRepository.findById(dto.getThirdPartyId())
-                    .filter(t -> t.getCompany().getId().equals(company.getId()))
+                    .filter(t -> t.getCompany().getId().equals(companyId))
                     .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId()));
 
             if (!thirdParty.getActive()) {
                 throw new InvalidOperationException(
-                        String.format("Third Party %s is inactive and cannot be used.",
-                                thirdParty.getLegalDisplayName())
+                        String.format("Third Party %s is inactive and cannot be used.", thirdParty.getLegalDisplayName())
                 );
             }
 
@@ -480,14 +393,7 @@ public class JournalEntryService {
         }
     }
 
-    /**
-     * Handles cost center validation and assignment.
-     * If the account requires a cost center, validates that one is provided.
-     */
-    private void handleCostCenter(JournalEntryItem item,
-                                  JournalEntryRequest.ItemRequest dto,
-                                  ChartOfAccounts account,
-                                  Company company) {
+    private void handleCostCenter(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Long companyId) {
         if (account.isRequiresCostCenter()) {
             if (dto.getCostCenterId() == null) {
                 throw new InvalidOperationException(
@@ -497,13 +403,12 @@ public class JournalEntryService {
             }
 
             CostCenter costCenter = costCenterRepository.findById(dto.getCostCenterId())
-                    .filter(c -> c.getCompany().getId().equals(company.getId()))
+                    .filter(c -> c.getCompany().getId().equals(companyId))
                     .orElseThrow(() -> new ResourceNotFoundException("CostCenter", dto.getCostCenterId()));
 
             if (!costCenter.isActive()) {
                 throw new InvalidOperationException(
-                        String.format("Cost Center %s is inactive and cannot be used.",
-                                costCenter.getName())
+                        String.format("Cost Center %s is inactive and cannot be used.", costCenter.getName())
                 );
             }
 
@@ -515,93 +420,45 @@ public class JournalEntryService {
     // READ OPERATIONS
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Lists journal entries with optional filtering and pagination.
-     *
-     * @param searchTerm Optional search term (searches document number and description)
-     * @param start Optional start date filter
-     * @param end Optional end date filter
-     * @param pageable Pagination parameters
-     * @return Paginated list of journal entries
-     */
-    public Page<JournalEntryResponseDTO> listEntries(String searchTerm,
-                                                     LocalDate start,
-                                                     LocalDate end,
-                                                     Pageable pageable) {
-        Company company = companyContext.getCurrentCompany();
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate start, LocalDate end, Pageable pageable) {
 
-        log.debug("Listing journal entries for company: {} with filters - search: {}, dates: {} to {}",
-                company.getId(), searchTerm, start, end);
+        Long companyId = currentTenantId();
+        log.debug("Listing journal entries for company ID: {}", companyId);
 
-        return repository.searchEntries(company, searchTerm, start, end, pageable)
+        return repository.searchEntries(companyId, searchTerm, start, end, pageable)
                 .map(this::mapToResponseDTO);
     }
 
-    /**
-     * Finds a journal entry by document number.
-     *
-     * @param docNum Document number (e.g., "CE-001")
-     * @return Journal entry details
-     * @throws ResourceNotFoundException if not found
-     */
     public JournalEntryResponseDTO findByDocumentNumber(String docNum) {
-        Company company = companyContext.getCurrentCompany();
-
-        return repository.findByCompanyAndDocumentNumber(company, docNum)
+        Long companyId = currentTenantId();
+        return repository.findByCompanyIdAndDocumentNumber(companyId, docNum)
                 .map(this::mapToResponseDTO)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Journal entry with document number '" + docNum + "' not found"
                 ));
     }
 
-    /**
-     * Finds a specific journal entry by its internal ID.
-     * Validates that the entry belongs to the current user's company.
-     *
-     * @param id The database primary key
-     * @return Mapped Response DTO
-     * @throws ResourceNotFoundException if not found or belongs to another company
-     */
     public JournalEntryResponseDTO findById(Long id) {
-        Company company = companyContext.getCurrentCompany();
-
+        Long companyId = currentTenantId();
         return repository.findById(id)
-                .filter(entry -> entry.getCompany().getId().equals(company.getId()))
+                .filter(entry -> entry.getCompany().getId().equals(companyId))
                 .map(this::mapToResponseDTO)
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
     }
-
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE REPORTS
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Generates Trial Balance Report as of a specific date.
-     *
-     * Shows cumulative balances for all accounts up to the specified date:
-     * - Account code and name
-     * - Total debits
-     * - Total credits
-     * - Net balance
-     * - Summary by account class
-     *
-     * @param asOfDate Date for the trial balance (null = current date)
-     * @return Complete trial balance report
-     */
     public TrialBalanceReport getTrialBalanceReport(LocalDate asOfDate) {
-        Company company = companyContext.getCurrentCompany();
-
-        // Default to current date if not provided
+        Long companyId = currentTenantId();
         if (asOfDate == null) {
             asOfDate = LocalDate.now();
         }
 
-        log.info("Generating Trial Balance for company: {} as of {}", company.getId(), asOfDate);
+        log.info("Generating Trial Balance for company ID: {} as of {}", companyId, asOfDate);
 
-        // Get trial balance lines from repository
-        List<TrialBalanceLine> lines = accountRepository.getTrialBalance(company, asOfDate);
+        List<TrialBalanceLine> lines = accountRepository.getTrialBalance(companyId, asOfDate);
 
-        // Calculate totals
         BigDecimal totalDebit = BigDecimal.ZERO;
         BigDecimal totalCredit = BigDecimal.ZERO;
 
@@ -610,7 +467,6 @@ public class JournalEntryService {
             totalCredit = totalCredit.add(line.getTotalCredit());
         }
 
-        // Generate summary by account class
         Map<String, BigDecimal> summary = new HashMap<>();
         int invalidCount = 0;
 
@@ -623,12 +479,10 @@ public class JournalEntryService {
             }
         }
 
-        // Log if any invalid data was found
         if (invalidCount > 0) {
             log.warn("Found {} trial balance lines with null net balance", invalidCount);
         }
 
-        // Check if balanced
         boolean isBalanced = totalDebit.setScale(2, RoundingMode.HALF_UP)
                 .compareTo(totalCredit.setScale(2, RoundingMode.HALF_UP)) == 0;
 
@@ -637,9 +491,7 @@ public class JournalEntryService {
                     totalDebit, totalCredit, totalDebit.subtract(totalCredit));
         }
 
-        // Build the report
         return TrialBalanceReport.builder()
-                .companyName(company.getLegalName())
                 .asOfDate(asOfDate)
                 .generatedAt(LocalDate.now())
                 .lines(lines)
@@ -650,41 +502,21 @@ public class JournalEntryService {
                 .build();
     }
 
-    /**
-     * Generates detailed Trial Balance with opening balances for a date range.
-     *
-     * Shows:
-     * - Opening balance (as of day before startDate)
-     * - Period activity (from startDate to endDate)
-     * - Closing balance (as of endDate)
-     *
-     * Business Rules:
-     * - Balance Sheet accounts (1,2,3): Opening balance = actual prior balance
-     * - Income Statement accounts (4,5,6,7): Opening balance = ZERO (temporary accounts)
-     *
-     * @param startDate Start of the reporting period
-     * @param endDate End of the reporting period
-     * @return Detailed trial balance report
-     */
-    public TrialBalanceReportDetailed getTrialBalanceDetailed(LocalDate startDate,
-                                                              LocalDate endDate) {
-        Company company = companyContext.getCurrentCompany();
+    public TrialBalanceReportDetailed getTrialBalanceDetailed(LocalDate startDate, LocalDate endDate) {
+        // CORREGIDO: Usamos el método unificado del Tenant en lugar de getCompanyId()
+        Long companyId = currentTenantId();
 
-        // Validation
         if (startDate == null || endDate == null) {
             throw new InvalidOperationException("Start date and end date are required");
         }
-
         if (startDate.isAfter(endDate)) {
             throw new InvalidOperationException("Start date cannot be after end date");
         }
 
-        log.info("Generating detailed Trial Balance for company: {} from {} to {}",
-                company.getId(), startDate, endDate);
+        log.info("Generating detailed Trial Balance for company ID: {} from {} to {}", companyId, startDate, endDate);
 
-        // 1. Get opening balances (only for Balance Sheet accounts - classes 1,2,3)
         Map<String, BigDecimal> openingBalances = new HashMap<>();
-        List<Object[]> openings = accountRepository.getOpeningBalances(company, startDate);
+        List<Object[]> openings = accountRepository.getOpeningBalances(companyId, startDate);
 
         for (Object[] row : openings) {
             String code = (String) row[0];
@@ -692,10 +524,7 @@ public class JournalEntryService {
             openingBalances.put(code, balance.setScale(2, RoundingMode.HALF_UP));
         }
 
-        log.debug("Retrieved opening balances for {} Balance Sheet accounts", openingBalances.size());
-
-        // 2. Get period activity (all accounts with activity in the period)
-        List<Object[]> activities = accountRepository.getPeriodActivity(company, startDate, endDate);
+        List<Object[]> activities = accountRepository.getPeriodActivity(companyId, startDate, endDate);
 
         List<TrialBalanceLineDetailed> lines = new ArrayList<>();
         BigDecimal totalOpeningBalance = BigDecimal.ZERO;
@@ -717,9 +546,6 @@ public class JournalEntryService {
             periodDebit = periodDebit.setScale(2, RoundingMode.HALF_UP);
             periodCredit = periodCredit.setScale(2, RoundingMode.HALF_UP);
 
-            // CRITICAL BUSINESS RULE:
-            // Opening balance = 0 for Income Statement accounts (4,5,6,7) - temporary accounts
-            // Opening balance = actual for Balance Sheet accounts (1,2,3) - permanent accounts
             BigDecimal opening = closesAtYearEnd
                     ? BigDecimal.ZERO
                     : openingBalances.getOrDefault(code, BigDecimal.ZERO);
@@ -743,18 +569,15 @@ public class JournalEntryService {
 
             lines.add(line);
 
-            // Update totals
             totalOpeningBalance = totalOpeningBalance.add(opening);
             totalPeriodDebit = totalPeriodDebit.add(periodDebit);
             totalPeriodCredit = totalPeriodCredit.add(periodCredit);
             totalNetMovement = totalNetMovement.add(netMovement);
             totalClosingBalance = totalClosingBalance.add(closing);
 
-            // Update summary by class
             summaryByClass.merge(classDisplay, closing, BigDecimal::add);
         }
 
-        // Check if period is balanced (debits should equal credits)
         boolean isBalanced = totalPeriodDebit.setScale(2, RoundingMode.HALF_UP)
                 .compareTo(totalPeriodCredit.setScale(2, RoundingMode.HALF_UP)) == 0;
 
@@ -763,10 +586,7 @@ public class JournalEntryService {
                     totalPeriodDebit, totalPeriodCredit, totalPeriodDebit.subtract(totalPeriodCredit));
         }
 
-        log.info("Detailed Trial Balance generated: {} accounts, Balanced: {}", lines.size(), isBalanced);
-
         return TrialBalanceReportDetailed.builder()
-                .companyName(company.getLegalName())
                 .startDate(startDate)
                 .endDate(endDate)
                 .generatedAt(LocalDate.now())
@@ -781,13 +601,6 @@ public class JournalEntryService {
                 .build();
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // HELPER METHODS FOR REPORTS
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * Helper method to get display name for account class.
-     */
     private String getAccountClassDisplay(AccountClass accountClass) {
         return switch (accountClass) {
             case ASSET -> "1 - Assets";
@@ -799,15 +612,10 @@ public class JournalEntryService {
         };
     }
 
-    /**
-     * Helper to translate the first digit of the code into a Category Name.
-     * Based on Colombian PUC (Plan Único de Cuentas) structure.
-     */
     private String getAccountClassName(String code) {
         if (code == null || code.isEmpty()) {
             return "Other";
         }
-
         char firstDigit = code.charAt(0);
         return switch (firstDigit) {
             case '1' -> "1 - Assets";
@@ -824,9 +632,6 @@ public class JournalEntryService {
     // DTO MAPPING
     // ═══════════════════════════════════════════════════════════
 
-    /**
-     * Maps JournalEntry entity to response DTO.
-     */
     private JournalEntryResponseDTO mapToResponseDTO(JournalEntry entry) {
         if (entry == null) {
             return null;
@@ -852,11 +657,9 @@ public class JournalEntryService {
                         i.setThirdPartyIdNumber(item.getThirdParty().getDocumentNumber());
                         i.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
                     }
-
                     if (item.getCostCenter() != null) {
                         i.setCostCenterName(item.getCostCenter().getName());
                     }
-
                     return i;
                 })
                 .toList();

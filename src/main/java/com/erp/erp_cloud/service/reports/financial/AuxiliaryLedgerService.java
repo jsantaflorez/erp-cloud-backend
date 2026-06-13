@@ -10,6 +10,7 @@ import com.erp.erp_cloud.enums.AccountNature;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
+import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,11 +24,10 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class AuxiliaryLedgerService {
+public class AuxiliaryLedgerService extends TenantAwareService {
 
     private final ChartOfAccountsRepository chartOfAccountsRepository;
     private final JournalEntryRepository journalEntryRepository;
-    private final TenantContext companyContext;
 
     /**
      * Generates Auxiliary Ledger Report (Libro Auxiliar por Cuenta).
@@ -50,20 +50,24 @@ public class AuxiliaryLedgerService {
             String startCode,
             String endCode) {
 
-        Company company = companyContext.getCurrentCompany();
+        // Extraemos el ID numérico optimizado del Tenant actual
+        Long companyId = currentTenantId();
 
-        // 1. Fetch opening balances for all accounts in range
+        // Obtenemos la entidad Company desde el ThreadLocal sin generar queries SQL adicionales
+        Company company = TenantContext.getCurrentCompany();
+
+        // 1. Fetch opening balances for all accounts in range (ADAPTED to Long companyId)
         Map<String, BigDecimal> openingBalancesMap = chartOfAccountsRepository
-                .getOpeningBalancesForAuxiliary(company, startDate, startCode, endCode)
+                .getOpeningBalancesForAuxiliary(companyId, startDate, startCode, endCode)
                 .stream()
                 .collect(Collectors.toMap(
                         obj -> (String) obj[0],
                         obj -> (BigDecimal) obj[1]
                 ));
 
-        // 2. Fetch all transaction items for the range
+        // 2. Fetch all transaction items for the range (ADAPTED to Long companyId)
         List<JournalEntryItem> allItems = journalEntryRepository.findItemsForAuxiliary(
-                company, startDate, endDate, startCode, endCode);
+                companyId, startDate, endDate, startCode, endCode);
 
         // 3. Group items by account code
         Map<String, List<JournalEntryItem>> itemsByAccount = allItems.stream()
@@ -78,9 +82,9 @@ public class AuxiliaryLedgerService {
         List<AuxiliaryAccountGroup> accountGroups = new ArrayList<>();
 
         for (String code : allAccountCodes.stream().sorted().toList()) {
-            // Get account metadata
+            // Get account metadata (ADAPTED to Long companyId)
             ChartOfAccounts account = chartOfAccountsRepository
-                    .findByCompanyAndCode(company, code)
+                    .findByCompanyIdAndCode(companyId, code)
                     .orElse(null);
 
             if (account == null) {
@@ -146,16 +150,11 @@ public class AuxiliaryLedgerService {
 
     /**
      * Processes transactions and calculates running balance.
-     *
-     * @param items List of journal entry items for this account
-     * @param startBalance Opening balance
-     * @param nature Account nature (D or C)
-     * @return List of transactions with running balances
      */
     private List<AuxiliaryLedgerTransaction> processRunningBalance(
             List<JournalEntryItem> items,
             BigDecimal startBalance,
-            AccountNature nature) {  // ✅ Enum parameter
+            AccountNature nature) {
 
         List<AuxiliaryLedgerTransaction> dtos = new ArrayList<>();
         BigDecimal currentBalance = startBalance;
@@ -165,7 +164,7 @@ public class AuxiliaryLedgerService {
             BigDecimal credit = item.getCredit() != null ? item.getCredit() : BigDecimal.ZERO;
 
             // Apply Colombian accounting logic per account nature
-            if (AccountNature.D.equals(nature)) {  // ✅ Enum comparison
+            if (AccountNature.D.equals(nature)) {
                 currentBalance = currentBalance.add(debit).subtract(credit);
             } else {
                 currentBalance = currentBalance.add(credit).subtract(debit);
