@@ -18,10 +18,14 @@ import java.util.Optional;
 @Repository
 public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long> {
 
+    // ═══════════════════════════════════════════════════════════
+    // ADVANCED SEARCH ENGINE (With Native Tenant & Pagination Shield)
+    // ═══════════════════════════════════════════════════════════
+
     /**
      * Search journal entries with filters.
      * Excludes logically deleted records (active = false).
-     * ADAPTED: Uses companyId (Long) instead of Company entity.
+     * ADAPTED: Uses companyId (Long) and synchronizes countQuery filters to prevent Pageable discrepancies.
      */
     @Query(value = "SELECT j FROM JournalEntry j " +
             "JOIN FETCH j.documentType " +
@@ -32,9 +36,14 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
             "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
             "AND (:endDate IS NULL OR j.entryDate <= :endDate)",
-            countQuery = "SELECT COUNT(j) FROM JournalEntry j WHERE j.company.id = :companyId " +
+            countQuery = "SELECT COUNT(j) FROM JournalEntry j " +
+                    "WHERE j.company.id = :companyId " +
                     "AND j.active = true " +
-                    "AND (:searchTerm IS NULL OR LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')))")
+                    "AND (:searchTerm IS NULL OR " +
+                    "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
+                    "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
+                    "AND (:endDate IS NULL OR j.entryDate <= :endDate)")
     Page<JournalEntry> searchEntries(
             @Param("companyId") Long companyId,
             @Param("searchTerm") String searchTerm,
@@ -42,14 +51,20 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("endDate") LocalDate endDate,
             Pageable pageable);
 
+    // ═══════════════════════════════════════════════════════════
+    // ADAPTED TENANT METHODS (Primitive ID-based for optimization)
+    // ═══════════════════════════════════════════════════════════
+
     /**
-     * Checks if a third party has associated transactions in active journal entries.
-     * CONSERVED: Keeps original structure since thirdParty entity validation remains intact.
+     * Checks if a third party has associated transactions in active journal entries under the current tenant context.
+     * ADAPTED: Multi-tenant defense added to ensure data isolation.
      */
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntry e JOIN e.items item " +
-            "WHERE item.thirdParty = :thirdParty AND e.active = true")
-    boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
+            "WHERE e.company.id = :companyId " +
+            "AND item.thirdParty = :thirdParty " +
+            "AND e.active = true")
+    boolean existsByCompanyIdAndThirdParty(@Param("companyId") Long companyId, @Param("thirdParty") ThirdParty thirdParty);
 
     /**
      * Checks for duplicate document numbers.
@@ -78,6 +93,10 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     default Optional<JournalEntry> findByCompanyIdAndDocumentNumber(Long companyId, String documentNumber) {
         return findByCompanyIdAndDocumentNumberAndActiveTrue(companyId, documentNumber);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // CORE FINANCIAL REPORTING METHODS
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Calculates account balances for the Trial Balance report.
@@ -127,4 +146,13 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("startCode") String startCode,
             @Param("endCode") String endCode
     );
+
+    // ═══════════════════════════════════════════════════════════
+    // LEGACY METHODS (Object-based for backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+
+    @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
+            "FROM JournalEntry e JOIN e.items item " +
+            "WHERE item.thirdParty = :thirdParty AND e.active = true")
+    boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
 }

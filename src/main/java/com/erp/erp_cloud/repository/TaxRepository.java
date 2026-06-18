@@ -16,37 +16,54 @@ import java.util.Optional;
 @Repository
 public interface TaxRepository extends JpaRepository<Tax, Long> {
 
-    /**
-     * Finds all taxes for a specific company, ordered alphabetically by code.
-     * This ensures the UI dropdowns are always consistent.
-     */
-    List<Tax> findByCompanyOrderByCodeAsc(Company company);
+    // ═══════════════════════════════════════════════════════════
+    // ADAPTED TENANT METHODS (Primitive ID-based for optimization)
+    // ═══════════════════════════════════════════════════════════
 
     /**
-     * Finds a specific tax by its code within a company context.
+     * Finds all taxes for a specific company ID, ordered alphabetically by code.
      */
-    Optional<Tax> findByCompanyAndCode(Company company, String code);
+    List<Tax> findByCompanyIdOrderByCodeAsc(Long companyId);
+
+    /**
+     * Finds a specific tax by its code within a company context ID.
+     */
+    Optional<Tax> findByCompanyIdAndCode(Long companyId, String code);
 
     /**
      * Crucial for the Accounting Engine:
-     * Finds the tax rule linked to a specific account in the Chart of Accounts.
+     * Finds the tax rule linked to a specific account and company ID.
      */
+    Optional<Tax> findByCompanyIdAndAccount(Long companyId, ChartOfAccounts account);
+
+    /**
+     * Used for creating/updating to prevent duplicate codes in the same company ID.
+     */
+    boolean existsByCompanyIdAndCode(Long companyId, String code);
+
+    /**
+     * Prevents assigning the same accounting account to multiple tax rules within a company ID.
+     */
+    boolean existsByCompanyIdAndAccount(Long companyId, ChartOfAccounts account);
+
+    /**
+     * Optional: Lock a tax record during sensitive updates forcing tenant isolation.
+     * ADAPTED: Enforces tenant validation during locking to prevent cross-tenant access.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT t FROM Tax t WHERE t.id = :id AND t.company.id = :companyId")
+    Optional<Tax> findByIdWithLockAndCompanyId(@Param("id") Long id, @Param("companyId") Long companyId);
+
+    // ═══════════════════════════════════════════════════════════
+    // LEGACY METHODS (Object-based for backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+
+    List<Tax> findByCompanyOrderByCodeAsc(Company company);
+    Optional<Tax> findByCompanyAndCode(Company company, String code);
     Optional<Tax> findByCompanyAndAccount(Company company, ChartOfAccounts account);
-
-    /**
-     * Used for creating/updating to prevent duplicate codes in the same company.
-     */
     boolean existsByCompanyAndCode(Company company, String code);
-
-    /**
-     * Prevents assigning the same accounting account to multiple tax rules.
-     */
     boolean existsByCompanyAndAccount(Company company, ChartOfAccounts account);
 
-    /**
-     * Optional: Lock a tax record during sensitive updates
-     * (e.g., if you decide to track total tax collected in the future).
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT t FROM Tax t WHERE t.id = :id")
     Optional<Tax> findByIdWithLock(@Param("id") Long id);

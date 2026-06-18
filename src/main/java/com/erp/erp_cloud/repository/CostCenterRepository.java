@@ -10,6 +10,44 @@ import java.util.List;
 @Repository
 public interface CostCenterRepository extends JpaRepository<CostCenter, Long> {
 
+    // ═══════════════════════════════════════════════════════════
+    // ADAPTED TENANT METHODS (Primitive ID-based for optimization)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * ADAPTED: Retrieves all cost centers using the company primitive ID.
+     */
+    List<CostCenter> findByCompanyIdOrderByCodeAsc(Long companyId);
+
+    /**
+     * ADAPTED: Finds cost centers that allow direct accounting movements for a specific tenant ID.
+     */
+    List<CostCenter> findByCompanyIdAndAllowsMovementTrue(Long companyId);
+
+    /**
+     * ADAPTED: Gets root-level cost centers using the company primitive ID.
+     */
+    List<CostCenter> findByCompanyIdAndParentIsNull(Long companyId);
+
+    /**
+     * ADAPTED: Retrieves direct children of a specific parent cost center within a company context.
+     */
+    List<CostCenter> findByCompanyIdAndParentId(Long companyId, Long parentId);
+
+    /**
+     * ADAPTED: Checks if a cost center has any children using primitive IDs.
+     */
+    boolean existsByCompanyIdAndParentId(Long companyId, Long parentId);
+
+    /**
+     * ADAPTED: Checks if an active sub-center exists for a given parent within the tenant context.
+     */
+    boolean existsByCompanyIdAndParentIdAndActiveTrue(Long companyId, Long parentId);
+
+    // ═══════════════════════════════════════════════════════════
+    // LEGACY METHODS (Object-based for backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+
     // Retrieves all cost centers for a specific company ordered by code
     List<CostCenter> findByCompanyOrderByCodeAsc(Company company);
 
@@ -25,5 +63,6 @@ public interface CostCenterRepository extends JpaRepository<CostCenter, Long> {
     boolean existsByParentId(Long parentId);
 
     boolean existsByParentAndActiveTrue(CostCenter costCenter);
+
     boolean existsByParent(CostCenter parent);
 }

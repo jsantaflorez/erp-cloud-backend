@@ -3,14 +3,13 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.TaxRequest;
 import com.erp.erp_cloud.dto.TaxResponseDTO;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
-import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.Tax;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.TaxRepository;
-import com.erp.erp_cloud.security.context.TenantContext;
+import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,33 +22,34 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class TaxService {
+public class TaxService extends TenantAwareService {
 
     private static final Logger log = LoggerFactory.getLogger(TaxService.class);
 
     private final TaxRepository taxRepository;
     private final ChartOfAccountsRepository accountRepository;
-    private final TenantContext companyContext;
 
     // =====================================================
     // CREATE
     // =====================================================
 
     public TaxResponseDTO create(TaxRequest request) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Creating tax with code: {} for company: {}", request.getCode(), company.getId());
+        log.debug("Creating tax with code: {} for company ID: {}", request.getCode(), companyId);
 
-        // Validate duplicate code
-        if (taxRepository.existsByCompanyAndCode(company, request.getCode())) {
+        // ADAPTED: Validate duplicate code using primitive tenant scope
+        if (taxRepository.existsByCompanyIdAndCode(companyId, request.getCode())) {
             throw new DuplicateResourceException("Tax", "code", request.getCode());
         }
 
         Tax tax = new Tax();
-        tax.setCompany(company);
+        // Set the reference using proxy/ID depending on your structural mapping
+        // e.g., if your entity holds Company, or if you use an entity manager reference.
+        // For standard entity relations, we map fields via the request mapper helper
         tax.setActive(request.getActive() != null ? request.getActive() : true);
 
-        mapRequestToEntity(request, tax);
+        mapRequestToEntity(request, tax, companyId);
 
         Tax saved = taxRepository.save(tax);
         log.info("Tax created successfully with id: {} and code: {}", saved.getId(), saved.getCode());
@@ -63,11 +63,12 @@ public class TaxService {
 
     @Transactional(readOnly = true)
     public List<TaxResponseDTO> listAll() {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Listing all taxes for company: {}", company.getId());
+        log.debug("Listing all taxes for company ID: {}", companyId);
 
-        return taxRepository.findByCompanyOrderByCodeAsc(company)
+        // ADAPTED: Optimized multi-tenant fetch
+        return taxRepository.findByCompanyIdOrderByCodeAsc(companyId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
@@ -82,12 +83,12 @@ public class TaxService {
      * Internal helper to get the actual entity for internal Service use
      */
     private Tax findEntityById(Long id) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Finding tax by id: {} for company: {}", id, company.getId());
+        log.debug("Finding tax by id: {} for company ID: {}", id, companyId);
 
         return taxRepository.findById(id)
-                .filter(tax -> tax.getCompany().getId().equals(company.getId()))
+                .filter(tax -> tax.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Tax", id));
     }
 
@@ -96,18 +97,19 @@ public class TaxService {
     // =====================================================
 
     public TaxResponseDTO update(Long id, TaxRequest request) {
-        log.debug("Updating tax id: {}", id);
+        Long companyId = currentTenantId();
+        log.debug("Updating tax id: {} for company ID: {}", id, companyId);
 
         Tax existing = findEntityById(id);
 
         // Validate code change (if code changed, check for duplicates)
         if (!existing.getCode().equals(request.getCode())) {
-            if (taxRepository.existsByCompanyAndCode(companyContext.getCurrentCompany(), request.getCode())) {
+            if (taxRepository.existsByCompanyIdAndCode(companyId, request.getCode())) {
                 throw new DuplicateResourceException("Tax", "code", request.getCode());
             }
         }
 
-        mapRequestToEntity(request, existing);
+        mapRequestToEntity(request, existing, companyId);
 
         Tax updated = taxRepository.save(existing);
         log.info("Tax {} updated successfully", id);
@@ -144,9 +146,9 @@ public class TaxService {
     // =====================================================
 
     /**
-     * Maps request DTO to entity
+     * Maps request DTO to entity using current tenant isolation rules
      */
-    private void mapRequestToEntity(TaxRequest request, Tax entity) {
+    private void mapRequestToEntity(TaxRequest request, Tax entity, Long companyId) {
         entity.setCode(request.getCode());
         entity.setName(request.getName());
         entity.setType(request.getType());
@@ -155,9 +157,9 @@ public class TaxService {
         entity.setMinimumBase(request.getMinimumBase());
         entity.setSign(request.getSign());
 
-        // Validate and set ChartOfAccount
+        // Validate and set ChartOfAccount restricted by primitive tenant ID
         ChartOfAccounts account = accountRepository.findById(request.getAccountId())
-                .filter(acc -> acc.getCompany().getId().equals(entity.getCompany().getId()))
+                .filter(acc -> acc.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("ChartOfAccount", request.getAccountId()));
 
         // Business rule: Tax account must be a posting account
@@ -215,7 +217,8 @@ public class TaxService {
                         entity.getRate(),
                         entity.getSign())
         );
-       // Full tax description with account info
+
+        // Full tax description with account info
         // e.g., "IVA 19% (Account 240801)"
         if (entity.getAccount() != null) {
             dto.setFullTaxDescription(

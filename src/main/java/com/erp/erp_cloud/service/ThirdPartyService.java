@@ -3,7 +3,6 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.ThirdPartyRequest;
 import com.erp.erp_cloud.dto.ThirdPartyResponseDTO;
 import com.erp.erp_cloud.entity.City;
-import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.ThirdParty;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
@@ -13,8 +12,8 @@ import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.repository.CityRepository;
+import com.erp.erp_cloud.service.base.TenantAwareService;
 
-import com.erp.erp_cloud.security.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,12 +30,11 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class ThirdPartyService {
+public class ThirdPartyService extends TenantAwareService {
 
     private static final Logger log = LoggerFactory.getLogger(ThirdPartyService.class);
 
     private final ThirdPartyRepository thirdPartyRepository;
-    private final TenantContext companyContext;
     private final CityRepository cityRepository;
     private final CostCenterRepository costCenterRepository;
     private final JournalEntryRepository journalEntryRepository;
@@ -46,21 +44,20 @@ public class ThirdPartyService {
     // =====================================================
 
     public ThirdPartyResponseDTO create(ThirdPartyRequest request) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Creating third party with document number: {} for company: {}",
-                request.getDocumentNumber(), company.getId());
+        log.debug("Creating third party with document number: {} for company ID: {}",
+                request.getDocumentNumber(), companyId);
 
-        // Validate duplicate document number
-        if (thirdPartyRepository.existsByCompanyAndDocumentNumber(company, request.getDocumentNumber())) {
+        // ADAPTED: Validate duplicate document number within primitive tenant scope
+        if (thirdPartyRepository.existsByCompanyIdAndDocumentNumber(companyId, request.getDocumentNumber())) {
             throw new DuplicateResourceException("ThirdParty", "documentNumber", request.getDocumentNumber());
         }
 
         ThirdParty thirdParty = new ThirdParty();
-        thirdParty.setCompany(company);
         thirdParty.setActive(true);
 
-        mapRequestToEntity(request, thirdParty);
+        mapRequestToEntity(request, thirdParty, companyId);
 
         ThirdParty saved = thirdPartyRepository.save(thirdParty);
         log.info("Third party created successfully with id: {} and document: {}",
@@ -75,13 +72,14 @@ public class ThirdPartyService {
 
     @Transactional(readOnly = true)
     public Page<ThirdPartyResponseDTO> listAll(String searchTerm, Pageable pageable) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Listing third parties for company: {} with search term: {}", company.getId(), searchTerm);
+        log.debug("Listing third parties for company ID: {} with search term: {}", companyId, searchTerm);
 
+        // ADAPTED: Optimized primitives call
         Page<ThirdParty> entities = (searchTerm != null && !searchTerm.trim().isEmpty())
-                ? thirdPartyRepository.findBySearchTerm(company, searchTerm, pageable)
-                : thirdPartyRepository.findByCompany(company, pageable);
+                ? thirdPartyRepository.findBySearchTerm(companyId, searchTerm, pageable)
+                : thirdPartyRepository.findByCompanyId(companyId, pageable);
 
         return entities.map(this::mapToResponseDTO);
     }
@@ -92,31 +90,30 @@ public class ThirdPartyService {
     }
 
     /**
-     * Helper to get the actual entity for internal use
+     * Helper to get the actual entity for internal use enforcing tenant isolation
      */
     private ThirdParty findEntityById(Long id) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Finding third party by id: {} for company: {}", id, company.getId());
+        log.debug("Finding third party by id: {} for company ID: {}", id, companyId);
 
         return thirdPartyRepository.findById(id)
-                .filter(tp -> tp.getCompany().getId().equals(company.getId()))
+                .filter(tp -> tp.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", id));
     }
 
     /**
      * Users often search for third parties by name, not just document number
      */
-
     @Transactional(readOnly = true)
     public ThirdPartyResponseDTO getByLegalName(String legalName) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Searching third party by legal name: {} for company: {}", legalName, company.getId());
+        log.debug("Searching third party by legal name: {} for company ID: {}", legalName, companyId);
 
-        // This requires a custom query in your repository
+        // ADAPTED: Clean primitive check
         ThirdParty entity = thirdPartyRepository
-                .findByCompanyAndLegalName(company, legalName)
+                .findByCompanyIdAndLegalName(companyId, legalName)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         String.format("ThirdParty with legal name '%s' not found", legalName)
                 ));
@@ -125,15 +122,13 @@ public class ThirdPartyService {
     }
 
     /**
-     * For importing third parties from external systems:
-     *
-     **/
-
+     * For importing third parties from external systems
+     */
     @Transactional
     public List<ThirdPartyResponseDTO> createBulk(List<ThirdPartyRequest> requests) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.info("Creating {} third parties in bulk for company: {}", requests.size(), company.getId());
+        log.info("Creating {} third parties in bulk for company ID: {}", requests.size(), companyId);
 
         List<ThirdParty> entities = new ArrayList<>();
         Set<String> documentNumbers = new HashSet<>();
@@ -148,15 +143,14 @@ public class ThirdPartyService {
             }
             documentNumbers.add(request.getDocumentNumber());
 
-            // Check for duplicates in database
-            if (thirdPartyRepository.existsByCompanyAndDocumentNumber(company, request.getDocumentNumber())) {
+            // Check for duplicates in database using optimized primitive query
+            if (thirdPartyRepository.existsByCompanyIdAndDocumentNumber(companyId, request.getDocumentNumber())) {
                 throw new DuplicateResourceException("ThirdParty", "documentNumber", request.getDocumentNumber());
             }
 
             ThirdParty entity = new ThirdParty();
-            entity.setCompany(company);
             entity.setActive(true);
-            mapRequestToEntity(request, entity);
+            mapRequestToEntity(request, entity, companyId);
             entities.add(entity);
         }
 
@@ -169,22 +163,20 @@ public class ThirdPartyService {
 
     /**
      * Retrieves a third party by document number and maps it to a DTO.
-     * This is useful for the frontend to quickly find a customer/vendor by their ID.
      */
     @Transactional(readOnly = true)
     public ThirdPartyResponseDTO getByDocumentNumber(String documentNumber) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        log.debug("Finding third party by document number: {} for company: {}", documentNumber, company.getId());
+        log.debug("Finding third party by document number: {} for company ID: {}", documentNumber, companyId);
 
-        // We find the entity first, ensuring it belongs to the current company
+        // ADAPTED: Efficient primitive ID filtering
         ThirdParty entity = thirdPartyRepository
-                .findByCompanyAndDocumentNumber(company, documentNumber)
+                .findByCompanyIdAndDocumentNumber(companyId, documentNumber)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         String.format("ThirdParty with document number '%s' not found", documentNumber)
                 ));
 
-        // We map it to the ResponseDTO before returning to the controller
         return mapToResponseDTO(entity);
     }
 
@@ -192,7 +184,8 @@ public class ThirdPartyService {
     // UPDATE
     // =====================================================
     public ThirdPartyResponseDTO update(Long id, ThirdPartyRequest request) {
-        log.debug("Updating third party id: {}", id);
+        Long companyId = currentTenantId();
+        log.debug("Updating third party id: {} under tenant ID: {}", id, companyId);
 
         ThirdParty existing = findEntityById(id);
 
@@ -201,29 +194,27 @@ public class ThirdPartyService {
 
             // 1. Check if the third party has accounting movements
             if (journalEntryRepository.existsByThirdParty(existing)) {
-                // Since we don't have CurrentUser yet, we log the change with a SYSTEM label
-                // This ensures traceability in the server logs
                 log.error("AUDIT ALERT: NIT/Document changed for ThirdParty ID: {} from [{}] to [{}] " +
                                 "| Reason: Manual correction on record with existing accounting movements.",
                         id, existing.getDocumentNumber(), request.getDocumentNumber());
             }
 
             // 2. Strict Rule: New document number must not belong to another existing third party
-            if (thirdPartyRepository.existsByCompanyAndDocumentNumber(
-                    existing.getCompany(), request.getDocumentNumber())) {
+            if (thirdPartyRepository.existsByCompanyIdAndDocumentNumber(companyId, request.getDocumentNumber())) {
                 throw new DuplicateResourceException(
                         "ThirdParty", "documentNumber", request.getDocumentNumber()
                 );
             }
         }
 
-        mapRequestToEntity(request, existing);
+        mapRequestToEntity(request, existing, companyId);
 
         ThirdParty updated = thirdPartyRepository.save(existing);
         log.info("Third party {} updated successfully", id);
 
         return mapToResponseDTO(updated);
     }
+
     /**
      * Soft Delete: Instead of removing from DB, we deactivate the record.
      */
@@ -257,11 +248,8 @@ public class ThirdPartyService {
         log.info("Third party {} activated successfully", id);
     }
 
-
     /**
      * Calculates the Verification Digit (DV) for Colombian NIT using Modulo 11 algorithm.
-     * @param nit The document number string.
-     * @return The calculated single-digit integer.
      */
     private int calculateDV(String nit) {
         int[] primes = {3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71};
@@ -274,14 +262,12 @@ public class ThirdPartyService {
         }
 
         // --- OVERFLOW PROTECTION ---
-        // Verify the NIT length does not exceed our primes array capacity (15 digits)
         if (cleanNit.length() > primes.length) {
             log.error("NIT overflow: {} exceeds maximum calculation length of 15", cleanNit);
             throw new InvalidOperationException(
                     "The document number is too long for Verification Digit (DV) calculation. Max 15 digits allowed."
             );
         }
-
 
         for (int i = 0; i < cleanNit.length(); i++) {
             int digit = Character.getNumericValue(cleanNit.charAt(cleanNit.length() - 1 - i));
@@ -294,63 +280,59 @@ public class ThirdPartyService {
         log.debug("Calculated DV for NIT {}: {}", cleanNit, dv);
         return dv;
     }
+
     /**
      * Maps request DTO to entity, including all validations
      */
-    private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity) {
-        // Standardize document number (remove spaces/leading-trailing whitespace)
-        // 1. Document standardization
-        String cleanDoc = request.getDocumentNumber() != null ? request.getDocumentNumber().trim() : null; //Local variable for reuse
+    private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity, Long companyId) {
+        // Document standardization
+        String cleanDoc = request.getDocumentNumber() != null ? request.getDocumentNumber().trim() : null;
         entity.setDocumentNumber(cleanDoc);
         entity.setDocumentType(request.getDocumentType());
 
         // Calculate verification digit for numeric documents (Colombian NIT)
         if (cleanDoc != null && cleanDoc.matches("\\d+")) {
-            entity.setVerificationDigit(calculateDV(cleanDoc)); // Use cleanDoc
+            entity.setVerificationDigit(calculateDV(cleanDoc));
         }
         entity.setPersonType(request.getPersonType());
 
-        // 2. Box 36: TRADE NAME (Optional for everyone)
+        // Box 36: TRADE NAME (Optional for everyone)
         entity.setTradeName(request.getTradeName() != null ?
                 request.getTradeName().trim().toUpperCase() : null);
-        // 3. Box 35 & Names: LEGAL IDENTIFICATION
-        // For Legal Entities (Persona Jurídica)
-       if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
-           // Business name is mandatory for legal entities (Razón Social)
+
+        // Box 35 & Names: LEGAL IDENTIFICATION
+        if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
             if (request.getBusinessName() == null || request.getBusinessName().trim().isEmpty()) {
                 throw new InvalidOperationException("Business name (Razón Social) is required for legal entities.");
             }
             entity.setBusinessName(request.getBusinessName().trim().toUpperCase());
-        }else if ("NATURAL".equals(request.getPersonType())) {
-           // Names are mandatory for natural persons
-           if (request.getFirstName() == null || request.getLastName() == null) {
-               throw new InvalidOperationException("First and Last names are required for natural persons.");
-           }
-           entity.setFirstName(request.getFirstName().trim().toUpperCase());
-           entity.setMiddleName(request.getMiddleName() != null ? request.getMiddleName().trim().toUpperCase() : null);
-           entity.setLastName(request.getLastName().trim().toUpperCase());
-           entity.setSecondLastName(request.getSecondLastName() != null ? request.getSecondLastName().trim().toUpperCase() : null);
+        } else if ("NATURAL".equals(request.getPersonType())) {
+            if (request.getFirstName() == null || request.getLastName() == null) {
+                throw new InvalidOperationException("First and Last names are required for natural persons.");
+            }
+            entity.setFirstName(request.getFirstName().trim().toUpperCase());
+            entity.setMiddleName(request.getMiddleName() != null ? request.getMiddleName().trim().toUpperCase() : null);
+            entity.setLastName(request.getLastName().trim().toUpperCase());
+            entity.setSecondLastName(request.getSecondLastName() != null ? request.getSecondLastName().trim().toUpperCase() : null);
 
-           // Optional: A natural person can also have a Business Name (Box 35) in some contexts,
-           // but usually, they use Trade Name (Box 36).
-           entity.setBusinessName(request.getBusinessName() != null ?
-                   request.getBusinessName().trim().toUpperCase() : null);
-       }
+            entity.setBusinessName(request.getBusinessName() != null ?
+                    request.getBusinessName().trim().toUpperCase() : null);
+        }
 
         entity.setTaxRegime(request.getTaxRegime());
 
-        // Contact Email normalization (lowercase is standard for emails)
+        // Contact Email normalization
         entity.setEmail(request.getEmail() != null ?
                 request.getEmail().trim().toLowerCase() : null);
 
-        // Contact BillinfEmail normalization (lowercase is standard for emails)
+        // Billing Email normalization
         entity.setBillingEmail(request.getBillingEmail() != null ?
                 request.getBillingEmail().trim().toLowerCase() : null);
 
         entity.setPhone(request.getPhone());
         entity.setMobile(request.getMobile());
 
-        // Address normalization (Standardized for reports)
+        // Address normalization
         entity.setAddress(request.getAddress() != null ? request.getAddress().trim().toUpperCase() : null);
 
         // Validate and set City
@@ -360,11 +342,10 @@ public class ThirdPartyService {
                 ));
         entity.setCity(city);
 
-
-        // Validate and set default Cost Center (optional)
+        // Validate and set default Cost Center (optional) restrict to current tenant primitive scope
         if (request.getDefaultCostCenterId() != null) {
             CostCenter cc = costCenterRepository.findById(request.getDefaultCostCenterId())
-                    .filter(c -> c.getCompany().getId().equals(entity.getCompany().getId()))
+                    .filter(c -> c.getCompany().getId().equals(companyId))
                     .filter(CostCenter::isAllowsMovement)
                     .orElseThrow(() -> new InvalidOperationException(
                             "Invalid Cost Center: Either not found, doesn't belong to company, or doesn't allow movements."
@@ -373,8 +354,6 @@ public class ThirdPartyService {
         } else {
             entity.setDefaultCostCenter(null);
         }
-
-
     }
 
     /**
@@ -393,7 +372,6 @@ public class ThirdPartyService {
         dto.setPersonType(entity.getPersonType());
         dto.setTaxRegime(entity.getTaxRegime());
 
-        // Using your entity helper methods
         dto.setLegalDisplayName(entity.getLegalDisplayName());
         dto.setFullIdentity(entity.getFullIdentity());
 
@@ -413,5 +391,4 @@ public class ThirdPartyService {
 
         return dto;
     }
-
 }

@@ -70,6 +70,31 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
     Optional<AccountingPeriod> findByCompanyIdAndYearAndMonth(Long companyId, Integer year, Integer month);
 
     /**
+     * ADAPTED: Retrieves all periods for a company ID, ordered by date descending.
+     */
+    List<AccountingPeriod> findByCompanyIdOrderByYearDescMonthDesc(Long companyId);
+
+    /**
+     * ADAPTED: Retrieves only closed periods for a company ID.
+     */
+    List<AccountingPeriod> findByCompanyIdAndOpenFalse(Long companyId);
+
+    /**
+     * ADAPTED: Retrieves only open periods for a company ID.
+     */
+    List<AccountingPeriod> findByCompanyIdAndOpenTrue(Long companyId);
+
+    /**
+     * ADAPTED: Checks if a period exists for a specific month using company ID.
+     */
+    boolean existsByCompanyIdAndYearAndMonth(Long companyId, Integer year, Integer month);
+
+    /**
+     * ADAPTED: Retrieves all period records for a specific year and company ID.
+     */
+    List<AccountingPeriod> findByCompanyIdAndYear(Long companyId, Integer year);
+
+    /**
      * ADAPTED CRITICAL: Checks if a Fiscal Year is locked (Annual Close) using the company primitive ID.
      * Navigates directly through the foreign key parameter to avoid overhead.
      */

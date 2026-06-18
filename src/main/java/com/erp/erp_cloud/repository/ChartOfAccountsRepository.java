@@ -17,6 +17,10 @@ import java.util.Optional;
 @Repository
 public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOfAccounts, Long> {
 
+    // ═══════════════════════════════════════════════════════════
+    // BASIC VALIDATIONS & HIERARCHY (Optimized with Primitive IDs)
+    // ═══════════════════════════════════════════════════════════
+
     /**
      * Basic validations per company
      */
@@ -32,6 +36,29 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
 
     // Direct children of a specific account (Updated to use Long companyId)
     List<ChartOfAccounts> findByCompanyIdAndParentIdOrderByCodeAsc(Long companyId, Long parentId);
+
+    // ADAPTED: Checks if an account has children within the strict scope of the current company ID
+    boolean existsByCompanyIdAndParentId(Long companyId, Long parentId);
+
+    // Active accounts filtered by level with pagination (Updated to use Long companyId)
+    Page<ChartOfAccounts> findByCompanyIdAndLevelAndActiveTrue(Long companyId, Byte level, Pageable pageable);
+
+    // ═══════════════════════════════════════════════════════════
+    // LEGACY METHODS (Object-based for backward compatibility)
+    // ═══════════════════════════════════════════════════════════
+
+    boolean existsByParent(ChartOfAccounts parent);
+
+    /**
+     * Retrieves the complete catalog for a company with pagination.
+     * @deprecated Use findAllByCompany(companyId, pageable) from TenantAwareRepository instead.
+     */
+    @Deprecated
+    Page<ChartOfAccounts> findByCompanyId(Long companyId, Pageable pageable);
+
+    // ═══════════════════════════════════════════════════════════
+    // ADVANCED FUNCTIONAL QUERIES & REPORTING ENGINE
+    // ═══════════════════════════════════════════════════════════
 
     /**
      * Retrieves accounts enabled for posting (auxiliary accounts)
@@ -53,18 +80,6 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
             @Param("text") String text,
             Pageable pageable);
 
-    // Active accounts filtered by level with pagination (Updated to use Long companyId)
-    Page<ChartOfAccounts> findByCompanyIdAndLevelAndActiveTrue(Long companyId, Byte level, Pageable pageable);
-
-    /**
-     * Retrieves the complete catalog for a company with pagination.
-     * @deprecated Use findAllByCompany(companyId, pageable) from TenantAwareRepository instead.
-     */
-    @Deprecated
-    Page<ChartOfAccounts> findByCompanyId(Long companyId, Pageable pageable);
-
-    boolean existsByParent(ChartOfAccounts parent);
-
     @Query("""
         SELECT new com.erp.erp_cloud.dto.TrialBalanceLine(
             a.code, 
@@ -81,8 +96,17 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     List<TrialBalanceLine> getTrialBalance(@Param("companyId") Long companyId);
 
     /**
-     * Checks if an account has any journal entry items.
+     * Checks if an account has any journal entry items under the current company context.
      * Used to prevent deletion/deactivation of accounts with movements.
+     */
+    @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
+            "FROM JournalEntryItem item " +
+            "WHERE item.account = :account " +
+            "AND item.account.company.id = :companyId")
+    boolean existsByCompanyIdAndAccount(@Param("companyId") Long companyId, @Param("account") ChartOfAccounts account);
+
+    /**
+     * Legacy integrity check.
      */
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntryItem item " +

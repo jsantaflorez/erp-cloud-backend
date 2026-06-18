@@ -2,9 +2,8 @@ package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.TaxCalculationResult;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
-import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.repository.TaxRepository;
-import com.erp.erp_cloud.security.context.TenantContext;
+import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -13,20 +12,20 @@ import java.math.RoundingMode;
 
 @Service
 @RequiredArgsConstructor
-public class AccountingEngineService {
+public class AccountingEngineService extends TenantAwareService {
 
     private final TaxRepository taxRepository;
-    private final TenantContext companyContext;
 
     /**
      * Calculates the tax for a given account and base amount.
      * Useful for automatic Journal Entry generation.
+     * Aligned with the primitive ID multi-tenant optimization strategy.
      */
     public TaxCalculationResult calculateTax(ChartOfAccounts account, BigDecimal baseAmount) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
 
-        // 1. Try to find a tax rule linked to this account
-        return taxRepository.findByCompanyAndAccount(company, account)
+        // 1. ADAPTED: Try to find a tax rule linked to this account using the optimized primitive tenant ID
+        return taxRepository.findByCompanyIdAndAccount(companyId, account)
                 .map(tax -> {
                     // 2. Check if the base meets the minimum requirement
                     boolean meetsMinimum = baseAmount.abs().compareTo(tax.getMinimumBase()) >= 0;

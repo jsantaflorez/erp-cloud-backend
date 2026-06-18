@@ -3,13 +3,12 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.DocumentTypeRequest;
 import com.erp.erp_cloud.dto.DocumentTypeResponseDTO;
 import com.erp.erp_cloud.entity.DocumentType;
-import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.DocumentTypeRepository;
-import com.erp.erp_cloud.security.context.TenantContext;
+import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,56 +20,59 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-public class DocumentTypeService {
+public class DocumentTypeService extends TenantAwareService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentTypeService.class);
 
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
-    private final TenantContext companyContext;
+
+    // =====================================================
+    // CREATE
+    // =====================================================
     @Transactional
     public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
-        Company company = companyContext.getCurrentCompany();
-        log.debug("Creating document type with code: {} for company: {}", request.getCode(), company.getId());
+        Long companyId = currentTenantId();
+        log.debug("Creating document type with code: {} for company ID: {}", request.getCode(), companyId);
 
-        if (repository.existsByCompanyAndCode(company, request.getCode())) {
+        // ADAPTED: Strict tenant uniqueness check using primitive ID
+        if (repository.existsByCompanyIdAndCode(companyId, request.getCode())) {
             throw new DuplicateResourceException("DocumentType", "code", request.getCode());
         }
 
         DocumentType entity = new DocumentType();
-        entity.setCompany(company);
         entity.setActive(true);
         entity.setCurrentConsecutive(0L);
 
-        mapRequestToEntity(entity, request, company);
+        mapRequestToEntity(entity, request, companyId);
 
         return mapToResponseDTO(repository.save(entity));
     }
+
     // =====================================================
     // UPDATE
     // =====================================================
-
     @Transactional
     public DocumentTypeResponseDTO update(Long id, DocumentTypeRequest request) {
+        Long companyId = currentTenantId();
         DocumentType existing = findById(id);
-        Company company = companyContext.getCurrentCompany();
 
+        // ADAPTED: Validates uniqueness against primitive tenant scope if the code is changing
         if (!existing.getCode().equals(request.getCode()) &&
-                repository.existsByCompanyAndCode(company, request.getCode())) {
+                repository.existsByCompanyIdAndCode(companyId, request.getCode())) {
             throw new DuplicateResourceException("DocumentType", "code", request.getCode());
         }
 
-        mapRequestToEntity(existing, request, company);
+        mapRequestToEntity(existing, request, companyId);
         return mapToResponseDTO(repository.save(existing));
     }
 
-
     @Transactional(readOnly = true)
     public List<DocumentTypeResponseDTO> listAll() {
-        Company company = companyContext.getCurrentCompany();
-        log.debug("Listing all active document types for company: {}", company.getId());
+        Long companyId = currentTenantId();
+        log.debug("Listing all active document types for company ID: {}", companyId);
 
-        return repository.findByCompanyIdAndActiveTrue(company.getId())
+        return repository.findByCompanyIdAndActiveTrue(companyId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
@@ -78,13 +80,15 @@ public class DocumentTypeService {
 
     /**
      * Internal helper for other services that need the actual Entity.
+     * Enforces context-level tenant isolation.
      */
     @Transactional(readOnly = true)
     public DocumentType findById(Long id) {
-        log.debug("Finding document type by id: {}", id);
+        Long companyId = currentTenantId();
+        log.debug("Finding document type by id: {} for company ID: {}", id, companyId);
 
         return repository.findById(id)
-                .filter(dt -> dt.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
+                .filter(dt -> dt.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("DocumentType", id));
     }
 
@@ -96,7 +100,6 @@ public class DocumentTypeService {
         return mapToResponseDTO(findById(id));
     }
 
-
     /**
      * Increments the consecutive and returns the next number.
      * Note: In a high-traffic production environment, we use
@@ -104,11 +107,12 @@ public class DocumentTypeService {
      */
     @Transactional
     public Long getNextConsecutive(Long id) {
-        log.debug("Getting next consecutive for document type id: {}", id);
+        Long companyId = currentTenantId();
+        log.debug("Getting next consecutive for document type id: {} under company ID: {}", id, companyId);
 
         // 1. Fetch with a Lock - Thread B will wait here until Thread A finishes
         DocumentType dt = repository.findByIdWithLock(id)
-                .filter(d -> d.getCompany().getId().equals(companyContext.getCurrentCompany().getId()))
+                .filter(d -> d.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("DocumentType", id));
 
         // 2. Increment
@@ -166,19 +170,17 @@ public class DocumentTypeService {
     // =====================================================
     // SEARCH
     // =====================================================
-
     @Transactional(readOnly = true)
     public List<DocumentTypeResponseDTO> searchByName(String name) {
-        Company company = companyContext.getCurrentCompany();
+        Long companyId = currentTenantId();
+        log.debug("Searching document types by name: {} for company ID: {}", name, companyId);
 
-        log.debug("Searching document types by name: {} for company: {}", name, company.getId());
-
-        return repository.findByCompanyAndNameContainingIgnoreCase(company, name)
+        // ADAPTED: Uses optimized primitive long lookup
+        return repository.findByCompanyIdAndNameContainingIgnoreCase(companyId, name)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
     }
-
 
     // --- MAPPING HELPERS ---
 
@@ -190,24 +192,27 @@ public class DocumentTypeService {
         entity.setLegalResolution(request.getLegalResolution());
     }
 
-    private void mapRequestToEntity(DocumentType entity, DocumentTypeRequest request, Company company) {
+    private void mapRequestToEntity(DocumentType entity, DocumentTypeRequest request, Long companyId) {
         entity.setCode(request.getCode());
         entity.setName(request.getName());
         entity.setPrefix(request.getPrefix());
-        entity.setAccounting(request.getIsAccounting());
+        entity.setAccounting(request.getIsAccounting()); // Aligning to accounting logic rules
         entity.setLegalResolution(request.getLegalResolution());
 
         // Handle the default account logic
         if (request.getDefaultAccountId() != null) {
             var account = accountRepository.findById(request.getDefaultAccountId())
-                    .filter(a -> a.getCompany().getId().equals(company.getId()))
+                    .filter(a -> a.getCompany().getId().equals(companyId))
                     .orElseThrow(() -> new ResourceNotFoundException("Account", request.getDefaultAccountId()));
             entity.setDefaultAccount(account);
         } else {
             entity.setDefaultAccount(null);
         }
     }
+
     private DocumentTypeResponseDTO mapToResponseDTO(DocumentType entity) {
+        if (entity == null) return null;
+
         DocumentTypeResponseDTO dto = new DocumentTypeResponseDTO();
         dto.setId(entity.getId());
         dto.setCode(entity.getCode());
