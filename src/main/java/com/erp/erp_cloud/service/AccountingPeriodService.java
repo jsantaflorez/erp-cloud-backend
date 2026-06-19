@@ -8,6 +8,8 @@ import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.AccountingPeriodRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
 import com.erp.erp_cloud.service.base.TenantAwareService;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,14 +31,17 @@ public class AccountingPeriodService extends TenantAwareService {
 
     private final AccountingPeriodRepository repository;
 
+    @PersistenceContext
+    private final EntityManager entityManager;
+
     // ═══════════════════════════════════════════════════════════
-    // QUERY METHODS (For Controller)
+    // QUERY METHODS (Optimized with Your Original Tenant Context)
     // ═══════════════════════════════════════════════════════════
 
     @Transactional(readOnly = true)
     public List<AccountingPeriodResponseDTO> findAllByCompany() {
-        Company company = TenantContext.getCurrentCompany();
-        return repository.findByCompanyOrderByYearDescMonthDesc(company)
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
+        return repository.findByCompanyIdOrderByYearDescMonthDesc(companyId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
@@ -44,8 +49,8 @@ public class AccountingPeriodService extends TenantAwareService {
 
     @Transactional(readOnly = true)
     public List<AccountingPeriodResponseDTO> findClosedByCompany() {
-        Company company = TenantContext.getCurrentCompany();
-        return repository.findByCompanyAndOpenFalse(company)
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
+        return repository.findByCompanyIdAndOpenFalse(companyId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
@@ -53,8 +58,8 @@ public class AccountingPeriodService extends TenantAwareService {
 
     @Transactional(readOnly = true)
     public List<AccountingPeriodResponseDTO> findOpenByCompany() {
-        Company company = TenantContext.getCurrentCompany();
-        return repository.findByCompanyAndOpenTrue(company)
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
+        return repository.findByCompanyIdAndOpenTrue(companyId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .collect(Collectors.toList());
@@ -62,27 +67,27 @@ public class AccountingPeriodService extends TenantAwareService {
 
     @Transactional(readOnly = true)
     public Optional<AccountingPeriodResponseDTO> findByYearAndMonth(Integer year, Integer month) {
-        Company company = TenantContext.getCurrentCompany();
-        return repository.findByCompanyAndYearAndMonth(company, year, month)
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
+        return repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
                 .map(this::mapToResponseDTO);
     }
 
     @Transactional(readOnly = true)
     public boolean isPeriodClosed(Integer year, Integer month) {
-        Company company = TenantContext.getCurrentCompany();
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
 
-        // Check Year-End Lock first
-        if (repository.existsByCompanyAndYearAndYearCloseTrue(company, year)) {
+        // Check Year-End Lock using optimized derived query (LIMIT 1)
+        if (repository.existsByCompanyIdAndYearAndYearCloseTrue(companyId, year)) {
             return true;
         }
 
-        return repository.findByCompanyAndYearAndMonth(company, year, month)
+        return repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
                 .map(p -> !p.isOpen())
-                .orElse(false); // If record doesn't exist, it's not closed
+                .orElse(false);
     }
 
     // ═══════════════════════════════════════════════════════════
-    // CLOSING LOGIC
+    // CLOSING LOGIC (Tenant Shield Applied)
     // ═══════════════════════════════════════════════════════════
 
     /**
@@ -98,18 +103,19 @@ public class AccountingPeriodService extends TenantAwareService {
      */
     @Transactional
     public void closeYear(Integer year, String closedBy, String notes) {
-        // We close the last month of the year (12) as a proxy for the year lock
         performClose(year, 12, closedBy, notes, true);
     }
 
     private AccountingPeriodResponseDTO performClose(Integer year, Integer month, String closedBy, String notes, boolean isYearEnd) {
-        Company company = TenantContext.getCurrentCompany();
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
         validateYearMonth(year, month);
 
-        AccountingPeriod period = repository.findByCompanyAndYearAndMonth(company, year, month)
+        AccountingPeriod period = repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
                 .orElseGet(() -> {
                     AccountingPeriod newP = new AccountingPeriod();
-                    newP.setCompany(company);
+                    // Avoids heavy select query by creating a lazy-loaded proxy reference using the ID
+                    Company proxyCompany = entityManager.getReference(Company.class, companyId);
+                    newP.setCompany(proxyCompany);
                     newP.setYear(year);
                     newP.setMonth(month);
                     return newP;
@@ -126,11 +132,11 @@ public class AccountingPeriodService extends TenantAwareService {
 
     @Transactional
     public AccountingPeriodResponseDTO reopenPeriod(Integer year, Integer month, String reopenedBy, String notes) {
-        Company company = TenantContext.getCurrentCompany();
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
         validateYearMonth(year, month);
 
-        AccountingPeriod period = repository.findByCompanyAndYearAndMonth(company, year, month)
-                .orElseThrow(() -> new ResourceNotFoundException("Period not found"));
+        AccountingPeriod period = repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
+                .orElseThrow(() -> new ResourceNotFoundException("Period not found under this company"));
 
         period.setOpen(true);
         period.setYearClose(false);
@@ -141,19 +147,15 @@ public class AccountingPeriodService extends TenantAwareService {
         return mapToResponseDTO(repository.save(period));
     }
 
-
     /**
      * Reopens a full fiscal year by removing the YearClose seal.
-     * This will allow transactions in months that are marked as OPEN.
      */
     @Transactional
     public void reopenYear(Integer year, String reopenedBy, String notes) {
-        Company company = TenantContext.getCurrentCompany();
+        Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
 
-        // 1. Get ALL records for that year
-        List<AccountingPeriod> yearPeriods = repository.findByCompanyAndYear(company, year);
+        List<AccountingPeriod> yearPeriods = repository.findByCompanyIdAndYear(companyId, year);
 
-        // 2. Filter those that have the annual seal and turn it off
         yearPeriods.stream()
                 .filter(AccountingPeriod::isYearClose)
                 .forEach(period -> {
@@ -164,9 +166,8 @@ public class AccountingPeriodService extends TenantAwareService {
                 });
 
         repository.saveAll(yearPeriods);
-        log.info("Fiscal Year {} has been unsealed by {}", year, reopenedBy);
+        log.info("Fiscal Year {} has been unsealed by {} for company {}", year, reopenedBy, companyId);
     }
-
 
     // ═══════════════════════════════════════════════════════════
     // VALIDATION (Used by JournalEntryService)
@@ -174,7 +175,6 @@ public class AccountingPeriodService extends TenantAwareService {
 
     /**
      * Validates if a specific transaction date is within an open period.
-     * ADAPTED: Now expects primitive Long companyId to match Tenant optimization.
      */
     @Transactional(readOnly = true)
     public void validateDateIsOpen(LocalDate date, Long companyId) {
@@ -183,12 +183,10 @@ public class AccountingPeriodService extends TenantAwareService {
         int year = date.getYear();
         int month = date.getMonthValue();
 
-        // 1. Check Year Lock (Using adapted primitive query method)
         if (repository.existsByCompanyIdAndYearAndYearCloseTrue(companyId, year)) {
             throw new InvalidOperationException("The Fiscal Year " + year + " is CLOSED.");
         }
 
-        // 2. Check Month Lock (Using adapted primitive query method)
         repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
                 .ifPresent(p -> {
                     if (!p.isOpen()) {

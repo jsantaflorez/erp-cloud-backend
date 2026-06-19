@@ -111,7 +111,8 @@ class AuthControllerIntegrationTest {
     @DisplayName("Should authenticate successfully and return 200 OK with a valid JWT token")
     void login_Success() throws Exception {
 
-        when(userRepository.findByEmailWithRolesAndPermissions(TEST_EMAIL))
+
+        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
                 .thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
@@ -134,7 +135,7 @@ class AuthControllerIntegrationTest {
     @DisplayName("Should return 401 when the provided password does not match")
     void login_Failure_BadCredentials() throws Exception {
 
-        when(userRepository.findByEmailWithRolesAndPermissions(TEST_EMAIL))
+        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
                 .thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
@@ -154,7 +155,7 @@ class AuthControllerIntegrationTest {
         // Override the lock state — everything else from setUp() remains valid
         mockUser.setLockedUntil(LocalDateTime.now().plusMinutes(15));
 
-        when(userRepository.findByEmailWithRolesAndPermissions(TEST_EMAIL))
+        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
                 .thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
@@ -175,8 +176,10 @@ class AuthControllerIntegrationTest {
 
         mockUser.setActive(false);
 
-        when(userRepository.findByEmailWithRolesAndPermissions(TEST_EMAIL))
+
+        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
                 .thenReturn(Optional.of(mockUser));
+
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -197,7 +200,8 @@ class AuthControllerIntegrationTest {
         otherCompany.setId(99L); // Different tenant — not the one being requested
         mockUserRole.setCompany(otherCompany);
 
-        when(userRepository.findByEmailWithRolesAndPermissions(TEST_EMAIL))
+
+        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
                 .thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)

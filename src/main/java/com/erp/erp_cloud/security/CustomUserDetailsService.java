@@ -55,11 +55,15 @@ public class CustomUserDetailsService implements UserDetailsService {
         log.debug("AUTH_ATTEMPT | identityHash: {} | tenant: {}", email.hashCode(), companyId);
 
         // 2. Single database round-trip: User + UserRoles + Roles + Permissions
-        User user = userRepository.findByEmailWithRolesAndPermissions(email)
+
+        // ═══════════════════════════════════════════════════════════
+        User user = userRepository.findByEmailWithRolesAndPermissionsForCompany(email, companyId)
                 .orElseThrow(() -> {
-                    log.warn("AUTH_FAIL | reason: USER_NOT_FOUND | identityHash: {}", email.hashCode());
+                    log.warn("AUTH_FAIL | reason: USER_NOT_FOUND_OR_INACTIVE | identityHash: {}", email.hashCode());
                     return new UsernameNotFoundException("Unauthorized identity criteria match rejected.");
                 });
+
+
 
         // 3. Defensive security state checks
         if (!user.isActive()) {
