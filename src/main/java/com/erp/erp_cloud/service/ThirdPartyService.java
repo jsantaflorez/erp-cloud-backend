@@ -375,6 +375,16 @@ public class ThirdPartyService extends TenantAwareService {
         dto.setLegalDisplayName(entity.getLegalDisplayName());
         dto.setFullIdentity(entity.getFullIdentity());
 
+        dto.setTradeName(entity.getTradeName());
+        dto.setFirstName(entity.getFirstName());
+        dto.setMiddleName(entity.getMiddleName());
+        dto.setLastName(entity.getLastName());
+        dto.setSecondLastName(entity.getSecondLastName());
+        dto.setBusinessName(entity.getBusinessName());
+
+
+
+
         dto.setEmail(entity.getEmail());
         dto.setBillingEmail(entity.getBillingEmail());
         dto.setMobile(entity.getMobile());

@@ -4,6 +4,8 @@ import lombok.Data;
 
 import com.erp.erp_cloud.enums.TaxRegime;
 
+import java.util.Optional;
+
 
 /**
  * Data Transfer Object for sending Third Party information to the UI.
@@ -22,6 +24,14 @@ public class ThirdPartyResponseDTO {
     private String legalDisplayName;
     private String tradeName;
     private String fullIdentity;
+
+
+    private String firstName;
+    private String middleName;
+    private String lastName;
+    private String secondLastName;
+    private String businessName;
+
 
     // Contact information
     private String email;

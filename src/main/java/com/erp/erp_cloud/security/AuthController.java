@@ -46,6 +46,24 @@ public class AuthController {
         // CustomUserDetailsService splits this to enforce tenant isolation
         String unifiedPrincipal = loginRequest.email() + "|" + loginRequest.companyId();
 
+        // =========================================================================
+// TEMPORAL DEBUG: Let's see exactly what text and encoder are processing
+// =========================================================================
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        String rawPasswordSent = loginRequest.password();
+        String dbHashMock = "$2a$10$dXJ3wXg77BW7697dy.T6rO7G6jYh4eZByyE0W.oVw.K.3t07S7IqW";
+
+        log.info("====== SECURITY VERIFICATION ======");
+        log.info("Raw Password from Swagger: [{}]", rawPasswordSent);
+        log.info("Length of raw password: {}", rawPasswordSent.length());
+        log.info("Manual BCrypt match check: {}", encoder.matches(rawPasswordSent, dbHashMock));
+        log.info("NUEVO HASH PARA COPIAR: {}", encoder.encode("Password123!"));
+        log.info("===================================");
+
+
+
+
+
         // Delegates full credential verification to the configured AuthenticationProvider chain.
         // On failure, BadCredentialsException propagates to GlobalExceptionHandler → 401 JSON response.
         Authentication authentication = authenticationManager.authenticate(

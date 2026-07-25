@@ -30,18 +30,21 @@ public class CorsConfig {
         ));
 
         // 3. Standard headers + custom infrastructure headers
+
         configuration.setAllowedHeaders(List.of(
                 "Authorization",       // JWT Bearer token
                 "Content-Type",        // JSON payloads
                 "Accept",
                 "X-Requested-With",
-                "X-Correlation-ID"     // Distributed tracing — consumed by GlobalExceptionHandler
+                "X-Correlation-ID",    // Distributed tracing — consumed by GlobalExceptionHandler
+                "X-Tenant-Id"          // Dynamic multi-tenancy bound routing header
         ));
 
         // 4. Expose headers so React Axios/Fetch can read them from the response
         configuration.setExposedHeaders(List.of(
                 "Authorization",
-                "X-Correlation-ID"
+                "X-Correlation-ID",
+                "X-Tenant-Id"
         ));
 
         // 5. Required for Authorization headers and credentialed requests

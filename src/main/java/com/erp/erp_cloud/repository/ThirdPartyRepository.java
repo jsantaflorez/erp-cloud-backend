@@ -98,7 +98,10 @@ public interface ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
             @Param("searchTerm") String searchTerm,
             Pageable pageable);
 
-    Optional<ThirdParty> findByCompanyAndLegalName(Company company, String name);
+    @Query("SELECT tp FROM ThirdParty tp WHERE tp.company = :company AND (" +
+            "UPPER(tp.businessName) = UPPER(:name) OR " +
+            "UPPER(CONCAT(tp.firstName, ' ', tp.lastName)) = UPPER(:name))")
+    Optional<ThirdParty> findByCompanyAndLegalName(@Param("company") Company company, @Param("name") String name);
 
     @Query("SELECT CASE WHEN COUNT(item) > 0 THEN true ELSE false END " +
             "FROM JournalEntry e JOIN e.items item " +

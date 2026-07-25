@@ -161,18 +161,30 @@ public class ChartOfAccountController {
 //        return ResponseEntity.noContent().build();
 //    }
 
+
+
     /**
-     * Deactivate an account (Logical delete).
+     * Deactivate an account (Logical delete — sets active=false).
+     * NOTE: This is a soft state change, not a real deletion — historical
+     * transactions are always preserved. Uses PATCH (not DELETE) because
+     * nothing is actually removed.
+     *
+     * TODO(hard-delete): a genuine DELETE endpoint may be added in the future
+     * for accounts that have NEVER had any movements or opening balances —
+     * e.g. DELETE /{id}, guarded by a check like
+     * !repository.hasTransactions(id) && !repository.hasOpeningBalance(id).
+     * This must remain a completely separate, stricter operation from
+     * deactivate(); an account with any historical activity must never be
+     * hard-deleted, only deactivated.
      */
-
-
-    @DeleteMapping("/{id}/deactivate")
+    @PatchMapping("/{id}/deactivate")
     @Operation(summary = "Deactivate account", description = "Performs a logical delete by setting the account as inactive.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Account deactivated successfully")
     public ResponseEntity<ApiResponse<Void>> deactivate(@PathVariable Long id) {
         chartOfAccountService.deactivate(id);
         return ResponseEntity.ok(new ApiResponse<>("Account deactivated successfully", true, null));
     }
+
 
 
     /**

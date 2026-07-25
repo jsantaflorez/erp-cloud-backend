@@ -17,22 +17,23 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * Used for the initial credentials verification (password check, MFA, lockouts).
      */
     Optional<User> findByEmail(String email);
-
     /**
      * Phase 2 (Tenant Authorization): Single database round-trip that fetches
      * User + UserRoles + Roles + Permissions strictly restricted to the active Company ID.
-     * FIXED: Moved the companyId restriction to the JOIN ON clause to guarantee clean
-     * collection filtering without breaking the LEFT JOIN behavior on the root User.
+     * FIXED: Aligned with Hibernate standard specifications by isolating tenant filtering
+     * inside the WHERE clause to avoid SemanticException, while maintaining Eager Fetching.
      */
     @Query("SELECT DISTINCT u FROM User u " +
-            "LEFT JOIN FETCH u.userRoles ur ON ur.company.id = :companyId " +
+            "LEFT JOIN FETCH u.userRoles ur " +
             "LEFT JOIN FETCH ur.role r " +
             "LEFT JOIN FETCH r.permissions p " +
             "WHERE u.email = :email " +
+            "AND (ur IS NULL OR ur.company.id = :companyId) " +
             "AND u.active = true")
     Optional<User> findByEmailWithRolesAndPermissionsForCompany(
             @Param("email") String email,
             @Param("companyId") Long companyId);
+
 
     /**
      * ADAPTED LIGHTWEIGHT OPTION: Retrieves only permission codes for the current tenant.
