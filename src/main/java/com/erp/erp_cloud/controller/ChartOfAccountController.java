@@ -5,6 +5,7 @@ import com.erp.erp_cloud.dto.ChartOfAccountRequest;
 import com.erp.erp_cloud.dto.ChartOfAccountResponseDTO;
 
 
+import com.erp.erp_cloud.dto.ChartOfAccountsMetadataDTO;
 import com.erp.erp_cloud.service.ChartOfAccountService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -134,6 +135,33 @@ public class ChartOfAccountController {
         Page<ChartOfAccountResponseDTO> data = chartOfAccountService.listByLevel(level, pageable);
 
         return ResponseEntity.ok(new ApiResponse<>("Accounts by level retrieved successfully", true, data));
+    }
+
+    // Actualiza el método getMetadata() en ChartOfAccountsController
+// (agregado: orden por displayOrder + accountClass en cada categoría)
+
+    @GetMapping("/metadata")
+    @Operation(summary = "Get Chart of Accounts enum metadata")
+    public ResponseEntity<ApiResponse<ChartOfAccountsMetadataDTO>> getMetadata() {
+        List<EnumOptionDTO> classes = Arrays.stream(AccountClass.values())
+                .map(c -> new EnumOptionDTO(c.name(), c.getDisplayName(), c.getDisplayNameEs()))
+                .toList();
+
+        // Ordenadas por displayOrder (ya definido en el enum) y con el
+        // accountClass al que pertenecen, para que el frontend pueda filtrar
+        // las categorías según la clase elegida.
+        List<CategoryOptionDTO> categories = Arrays.stream(AccountCategory.values())
+                .sorted(Comparator.comparingInt(AccountCategory::getDisplayOrder))
+                .map(c -> new CategoryOptionDTO(
+                        c.name(), c.getDisplayName(), c.getDisplayNameEs(), c.getAccountClass().name()))
+                .toList();
+
+        List<EnumOptionDTO> statements = Arrays.stream(FinancialStatement.values())
+                .map(s -> new EnumOptionDTO(s.name(), s.getDisplayName(), s.getDisplayNameEs()))
+                .toList();
+
+        ChartOfAccountsMetadataDTO metadata = new ChartOfAccountsMetadataDTO(classes, categories, statements);
+        return ResponseEntity.ok(new ApiResponse<>("Metadata retrieved successfully", true, metadata));
     }
 
 

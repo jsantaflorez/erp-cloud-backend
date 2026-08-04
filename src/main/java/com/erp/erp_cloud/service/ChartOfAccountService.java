@@ -7,6 +7,7 @@ import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
 import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,8 @@ import java.util.List;
 public class ChartOfAccountService extends TenantAwareService {
 
     private final ChartOfAccountsRepository repository;
+    private final CompanyRepository companyRepository;
+
 
     // ═══════════════════════════════════════════════════════════
     // WRITE OPERATIONS
@@ -38,6 +41,7 @@ public class ChartOfAccountService extends TenantAwareService {
         Long companyId = currentTenantId();
 
         log.debug("Creating account | code: {} | tenant: {}", request.getCode(), companyId);
+
 
         // Prevent duplicate account codes within the same tenant
         if (repository.existsByCompanyIdAndCode(companyId, request.getCode())) {
@@ -64,6 +68,8 @@ public class ChartOfAccountService extends TenantAwareService {
 
             account.setParent(parent);
             account.setLevel((byte) (parent.getLevel() + 1));
+
+
         } else {
             account.setParent(null);
             account.setLevel((byte) 1);
@@ -72,14 +78,28 @@ public class ChartOfAccountService extends TenantAwareService {
         // Validate PUC code structure before persisting
         validateCodeStructure(parent, request);
 
+        if (request.getAccountCategory() != null && request.getAccountClass() != null
+                && !request.getAccountCategory().belongsToClass(request.getAccountClass())) {
+            throw new InvalidOperationException(
+                    "The selected account category does not belong to the chosen account class.",
+                    "CATEGORY_CLASS_MISMATCH"
+            );
+        }
+
+
+
         // Map DTO fields to entity and bind to current tenant
         mapDtoToEntity(request, account);
-        account.setCompany(TenantContext.getCurrentCompany()); // Company entity required for FK
+
+        account.setCompany(companyRepository.getReferenceById(companyId));
         account.setActive(true);
+
 
         ChartOfAccounts saved = repository.save(account);
         log.info("Account created | id: {} | code: {} | tenant: {}",
                 saved.getId(), saved.getCode(), companyId);
+
+
 
         return mapToResponseDTO(saved);
     }
@@ -97,14 +117,18 @@ public class ChartOfAccountService extends TenantAwareService {
         // ACCOUNTING RULE: Account codes are immutable once created
         if (!existing.getCode().equals(request.getCode())) {
             throw new InvalidOperationException(
-                    "Account code cannot be modified. Create a new account if the code is incorrect.");
+                    "Account code cannot be modified. Create a new account if the code is incorrect.",
+                    "CODE_IMMUTABLE"
+            );
         }
 
         // BUSINESS RULE: Cannot convert to posting account if children exist
         if (Boolean.TRUE.equals(request.getPostingAccount()) && !existing.isPostingAccount()) {
             if (repository.existsByParent(existing)) {
                 throw new InvalidOperationException(
-                        "Cannot convert to posting account — account has child accounts.");
+                        "Cannot convert to posting account — account has child accounts.",
+                        "HAS_CHILDREN_CANNOT_POST"
+                );
             }
         }
 
@@ -125,9 +149,8 @@ public class ChartOfAccountService extends TenantAwareService {
         if (request.getParentId() != null) {
             // Prevent self-referencing
             if (id.equals(request.getParentId())) {
-                throw new InvalidOperationException("An account cannot be its own parent.");
+                throw new InvalidOperationException("An account cannot be its own parent.", "SELF_PARENT_NOT_ALLOWED");
             }
-
             // Secure parent lookup — scoped to current tenant
             parentToValidate = repository.findByIdAndCompany(request.getParentId(), currentTenantId())
                     .orElseThrow(() -> new ResourceNotFoundException(
@@ -136,11 +159,13 @@ public class ChartOfAccountService extends TenantAwareService {
             // Prevent circular references in the account hierarchy
             if (isDescendant(id, parentToValidate)) {
                 throw new InvalidOperationException(
-                        "Circular reference detected — cannot move account under one of its descendants.");
+                        "Circular reference detected — cannot move account under one of its descendants.",
+                        "CIRCULAR_REFERENCE"
+                );
             }
 
             if (parentToValidate.isPostingAccount()) {
-                throw new InvalidOperationException("Parent cannot be a posting account.");
+                throw new InvalidOperationException("Parent cannot be a posting account.", "PARENT_IS_POSTING_ACCOUNT");
             }
 
             validateHierarchyConsistency(parentToValidate, request);
@@ -155,6 +180,13 @@ public class ChartOfAccountService extends TenantAwareService {
                     : (byte) (parentToValidate.getLevel() + 1));
         }
 
+        if (request.getAccountCategory() != null && request.getAccountClass() != null
+                && !request.getAccountCategory().belongsToClass(request.getAccountClass())) {
+            throw new InvalidOperationException(
+                    "The selected account category does not belong to the chosen account class.",
+                    "CATEGORY_CLASS_MISMATCH"
+            );
+        }
         validateCodeStructure(parentToValidate, request);
         mapDtoToEntity(request, existing);
 

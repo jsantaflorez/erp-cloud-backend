@@ -5,6 +5,7 @@ import com.erp.erp_cloud.dto.CostCenterResponseDTO;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class CostCenterService extends TenantAwareService {
     private static final Logger log = LoggerFactory.getLogger(CostCenterService.class);
 
     private final CostCenterRepository repository;
+    private final CompanyRepository companyRepository;
 
     /**
      * Retrieves all cost centers for the current company context.
@@ -53,10 +55,11 @@ public class CostCenterService extends TenantAwareService {
 
         CostCenter costCenter = new CostCenter();
 
-        // Asignamos la relación simulada o proxy según maneje tu base de datos el TenantAware
-        // Si la entidad CostCenter requiere la referencia completa o maneja directamente el companyId:
-        // costCenter.setCompanyId(companyId);
-        // Por ahora, dejamos la lógica lista para asociar el ID del Tenant en el guardado.
+        // FIX: this was commented out — company_id was always NULL on insert.
+        // getReferenceById(...) gives a lazy proxy without hitting the DB
+        // (same pattern DocumentTypeService/ChartOfAccountsService use via
+        // Company relations elsewhere).
+        costCenter.setCompany(companyRepository.getReferenceById(companyId));
 
         CostCenterResponseDTO response = mapAndSave(request, costCenter, companyId);
 
@@ -64,6 +67,7 @@ public class CostCenterService extends TenantAwareService {
 
         return response;
     }
+
 
     /**
      * Updates an existing cost center and ensures it remains consistent.
@@ -203,8 +207,10 @@ public class CostCenterService extends TenantAwareService {
             if (parent.isAllowsMovement()) {
                 log.warn("Hierarchy violation: Parent center {} is an operational node", parent.getId());
                 throw new InvalidOperationException(
-                        "Cannot add sub-center: The parent center is marked to allow movements."
+                        "Cannot add sub-center: The parent center is marked to allow movements.",
+                        "PARENT_ALLOWS_MOVEMENT"
                 );
+
             }
             costCenter.setParent(parent);
             costCenter.setLevel(parent.getLevel() + 1);
@@ -220,7 +226,8 @@ public class CostCenterService extends TenantAwareService {
             if (repository.existsByParentId(costCenter.getId())) {
                 log.warn("Consistency violation: Center ID {} has children", costCenter.getId());
                 throw new InvalidOperationException(
-                        "This center has sub-centers and cannot be marked to allow movements."
+                        "This center has sub-centers and cannot be marked to allow movements.",
+                        "HAS_CHILDREN_CANNOT_POST"
                 );
             }
         }

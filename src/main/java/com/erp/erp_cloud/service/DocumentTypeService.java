@@ -7,6 +7,7 @@ import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.DocumentTypeRepository;
 import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
@@ -26,12 +27,13 @@ public class DocumentTypeService extends TenantAwareService {
 
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
+    private final CompanyRepository companyRepository;
 
     // =====================================================
     // CREATE
     // =====================================================
     @Transactional
-    public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
+    public DocumentTypeResponseDTO creatold(DocumentTypeRequest request) {
         Long companyId = currentTenantId();
         log.debug("Creating document type with code: {} for company ID: {}", request.getCode(), companyId);
 
@@ -43,6 +45,28 @@ public class DocumentTypeService extends TenantAwareService {
         DocumentType entity = new DocumentType();
         entity.setActive(true);
         entity.setCurrentConsecutive(0L);
+
+        mapRequestToEntity(entity, request, companyId);
+
+        return mapToResponseDTO(repository.save(entity));
+    }
+
+    @Transactional
+    public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
+        Long companyId = currentTenantId();
+        // ADAPTED: Strict tenant uniqueness check using primitive ID
+        if (repository.existsByCompanyIdAndCode(companyId, request.getCode())) {
+            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
+        }
+
+        DocumentType entity = new DocumentType();
+
+        // FIX: Assign lazy proxy to set company_id FK before saving
+        entity.setCompany(companyRepository.getReferenceById(companyId));
+
+        entity.setActive(true);
+        entity.setCurrentConsecutive(0L);
+
 
         mapRequestToEntity(entity, request, companyId);
 

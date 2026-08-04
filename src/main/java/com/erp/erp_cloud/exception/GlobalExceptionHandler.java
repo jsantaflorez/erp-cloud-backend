@@ -47,13 +47,20 @@ public class GlobalExceptionHandler {
                 .body(buildError(ex.getMessage(), request));
     }
 
+
+
     @ExceptionHandler(InvalidOperationException.class)
     public ResponseEntity<ApiResponse<Void>> handleInvalidOperation(InvalidOperationException ex, HttpServletRequest request) {
         log.warn("Invalid operation: {}", ex.getMessage());
+        // Prioritize stable code (which the frontend translates) when available;
+        // if a throw statement hasn't been migrated yet and only has a message, it
+        // continues to work exactly as it does today—100% backward-compatible.
+        String responseMessage = ex.getErrorCode() != null ? ex.getErrorCode() : ex.getMessage();
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
-                .body(buildError(ex.getMessage(), request));
+                .body(buildError(responseMessage, request));
     }
+
 
     // ═══════════════════════════════════════════════════════════
     // VALIDATION EXCEPTIONS
@@ -229,20 +236,26 @@ public class GlobalExceptionHandler {
     }
 
     private String extractConstraintMessage(DataIntegrityViolationException ex) {
-        String message = "A database constraint was violated.";
+        // Inspect the root cause from the underlying JDBC/MySQL driver exception
+        Throwable rootCause = ex.getRootCause();
+        String rootMessage = (rootCause != null && rootCause.getMessage() != null)
+                ? rootCause.getMessage().toLowerCase()
+                : "";
 
-        if (ex.getMessage() != null) {
-            String exMessage = ex.getMessage().toLowerCase();
-
-            if (exMessage.contains("unique") || exMessage.contains("duplicate")) {
-                message = "A record with this value already exists. Please use a different value.";
-            } else if (exMessage.contains("foreign key")) {
-                message = "Cannot perform this operation due to related records.";
-            } else if (exMessage.contains("not null")) {
-                message = "A required field is missing.";
-            }
+        // Returns a stable ERROR CODE, not a human-readable message — the
+        // frontend translates this code into the active UI language (es/en)
+        // using its own dictionary, the same pattern used for tax regimes.
+        if (rootMessage.contains("duplicate") || rootMessage.contains("unique")) {
+            return "DUPLICATE_VALUE";
+        }
+        if (rootMessage.contains("foreign key") || rootMessage.contains("cannot delete or update")) {
+            return "FK_CONSTRAINT";
+        }
+        if (rootMessage.contains("cannot be null") || rootMessage.contains("not null")) {
+            return "REQUIRED_FIELD_MISSING";
         }
 
-        return message;
+        return "DATA_INTEGRITY_VIOLATION";
     }
+
 }
