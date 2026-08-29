@@ -15,9 +15,23 @@ java {
 		languageVersion = JavaLanguageVersion.of(17)
 	}
 }
+// Fast unit tests (no Spring context, no DB) run by default via `./gradlew test`.
+// Tests tagged @Tag("integration") need a live MySQL matching application.properties
+// and are excluded here -- run them explicitly with `./gradlew integrationTest`.
 test {
-	useJUnitPlatform()
-	enabled = false
+	useJUnitPlatform {
+		excludeTags 'integration'
+	}
+}
+
+tasks.register('integrationTest', Test) {
+	description = 'Runs @Tag("integration") tests that require a live MySQL connection (see application.properties).'
+	group = 'verification'
+	useJUnitPlatform {
+		includeTags 'integration'
+	}
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
 }
 repositories {
 	mavenCentral()
@@ -57,7 +71,3 @@ dependencies {
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
 }
 
-
-tasks.named('test') {
-	useJUnitPlatform()
-}
