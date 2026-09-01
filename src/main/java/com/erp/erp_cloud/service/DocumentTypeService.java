@@ -48,8 +48,11 @@ public class DocumentTypeService extends TenantAwareService {
         entity.setCompany(companyRepository.getReferenceById(companyId));
 
         entity.setActive(true);
-        entity.setCurrentConsecutive(0L);
-
+        // Honor an explicit initial consecutive from the request (validated
+        // non-negative at the DTO level via @Min(0)); default to 0 when the
+        // client omits it, same as before.
+        entity.setCurrentConsecutive(
+                request.getCurrentConsecutive() != null ? request.getCurrentConsecutive() : 0L);
 
         mapRequestToEntity(entity, request, companyId);
 
