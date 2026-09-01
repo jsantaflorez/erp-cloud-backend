@@ -59,9 +59,14 @@ public class ChartOfAccountService extends TenantAwareService {
                             "ChartOfAccount (parent)", request.getParentId()));
 
             // BUSINESS RULE: Posting (auxiliary) accounts cannot have children
+
             if (parent.isPostingAccount()) {
-                throw new InvalidOperationException("Cannot add children to a posting account");
+                throw new InvalidOperationException(
+                        "Cannot add children to a posting account",
+                        "PARENT_IS_POSTING_ACCOUNT"
+                );
             }
+
 
             // BUSINESS RULE: All children must share the same AccountClass as the parent
             validateHierarchyConsistency(parent, request);

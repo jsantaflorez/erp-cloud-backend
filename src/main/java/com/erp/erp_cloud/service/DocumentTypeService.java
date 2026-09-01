@@ -32,24 +32,7 @@ public class DocumentTypeService extends TenantAwareService {
     // =====================================================
     // CREATE
     // =====================================================
-    @Transactional
-    public DocumentTypeResponseDTO creatold(DocumentTypeRequest request) {
-        Long companyId = currentTenantId();
-        log.debug("Creating document type with code: {} for company ID: {}", request.getCode(), companyId);
 
-        // ADAPTED: Strict tenant uniqueness check using primitive ID
-        if (repository.existsByCompanyIdAndCode(companyId, request.getCode())) {
-            throw new DuplicateResourceException("DocumentType", "code", request.getCode());
-        }
-
-        DocumentType entity = new DocumentType();
-        entity.setActive(true);
-        entity.setCurrentConsecutive(0L);
-
-        mapRequestToEntity(entity, request, companyId);
-
-        return mapToResponseDTO(repository.save(entity));
-    }
 
     @Transactional
     public DocumentTypeResponseDTO create(DocumentTypeRequest request) {
@@ -178,12 +161,16 @@ public class DocumentTypeService extends TenantAwareService {
 
         DocumentType existing = findById(id);
 
+
+        // En resetConsecutive(...):
         if (newConsecutive < existing.getCurrentConsecutive()) {
             throw new InvalidOperationException(
                     String.format("Cannot assign a lower consecutive. Current: %d, Requested: %d",
-                            existing.getCurrentConsecutive(), newConsecutive)
+                            existing.getCurrentConsecutive(), newConsecutive),
+                    "CONSECUTIVE_CANNOT_DECREASE"
             );
         }
+
 
         existing.setCurrentConsecutive(newConsecutive);
         repository.save(existing);

@@ -8,6 +8,7 @@ import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.TaxRepository;
 import com.erp.erp_cloud.service.base.TenantAwareService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class TaxService extends TenantAwareService {
 
     private final TaxRepository taxRepository;
     private final ChartOfAccountsRepository accountRepository;
+    private final CompanyRepository companyRepository;
 
     // =====================================================
     // CREATE
@@ -157,6 +159,7 @@ public class TaxService extends TenantAwareService {
         entity.setMinimumBase(request.getMinimumBase());
         entity.setSign(request.getSign());
 
+        entity.setCompany(companyRepository.getReferenceById(companyId));
         // Validate and set ChartOfAccount restricted by primitive tenant ID
         ChartOfAccounts account = accountRepository.findById(request.getAccountId())
                 .filter(acc -> acc.getCompany().getId().equals(companyId))

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -25,6 +26,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -102,14 +104,19 @@ class TaxServiceTest {
     @Test
     @DisplayName("create() always binds the tax to the current tenant's company")
     void create_bindsCompany_regressionGuardForNullCompanyIdBug() {
-        TaxResponseDTO result = service.create(baseRequest("IVA19"));
+        service.create(baseRequest("IVA19"));
 
-        assertThat(result).isNotNull();
         // The real guard is behavioral: mapRequestToEntity must have called
         // companyRepository.getReferenceById(companyId) so entity.company is
-        // never null when persisted. We assert the save was reached with a
-        // Tax whose id/company were populated (no exception thrown).
-        assertThat(result.getCode()).isEqualTo("IVA19");
+        // never null when persisted. TaxResponseDTO does not expose the
+        // company field, so asserting on the returned DTO alone would pass
+        // even if entity.setCompany(...) were removed again -- we must
+        // capture what was actually handed to taxRepository.save() instead.
+        ArgumentCaptor<Tax> captor = ArgumentCaptor.forClass(Tax.class);
+        verify(taxRepository).save(captor.capture());
+
+        assertThat(captor.getValue().getCompany()).isEqualTo(testCompany);
+        assertThat(captor.getValue().getCompany().getId()).isEqualTo(COMPANY_ID);
     }
 
     @Test

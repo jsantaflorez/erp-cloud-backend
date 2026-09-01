@@ -12,6 +12,7 @@ import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.repository.CityRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.service.base.TenantAwareService;
 
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,7 @@ public class ThirdPartyService extends TenantAwareService {
     private final CityRepository cityRepository;
     private final CostCenterRepository costCenterRepository;
     private final JournalEntryRepository journalEntryRepository;
+    private final CompanyRepository companyRepository;
 
     // =====================================================
     // CREATE
@@ -285,6 +287,8 @@ public class ThirdPartyService extends TenantAwareService {
      * Maps request DTO to entity, including all validations
      */
     private void mapRequestToEntity(ThirdPartyRequest request, ThirdParty entity, Long companyId) {
+        entity.setCompany(companyRepository.getReferenceById(companyId));
+
         // Document standardization
         String cleanDoc = request.getDocumentNumber() != null ? request.getDocumentNumber().trim() : null;
         entity.setDocumentNumber(cleanDoc);

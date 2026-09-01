@@ -1,11 +1,11 @@
 package com.erp.erp_cloud.controller;
 
-import com.erp.erp_cloud.dto.ApiResponse;
-import com.erp.erp_cloud.dto.ChartOfAccountRequest;
-import com.erp.erp_cloud.dto.ChartOfAccountResponseDTO;
+import com.erp.erp_cloud.dto.*;
 
 
-import com.erp.erp_cloud.dto.ChartOfAccountsMetadataDTO;
+import com.erp.erp_cloud.enums.AccountCategory;
+import com.erp.erp_cloud.enums.AccountClass;
+import com.erp.erp_cloud.enums.FinancialStatement;
 import com.erp.erp_cloud.service.ChartOfAccountService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +20,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 @RestController
