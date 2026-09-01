@@ -199,10 +199,28 @@ public class CostCenterService extends TenantAwareService {
         // --- VALIDATION 1: Parent Hierarchy Rule ---
         // A Cost Center marked as 'allowsMovement' (operational) cannot have sub-centers.
         if (request.getParentId() != null) {
+
+            // NEW: Prevent self-referencing (only relevant on update -- a new
+            // cost center has no id yet, so it can never equal its own parentId).
+            if (costCenter.getId() != null && costCenter.getId().equals(request.getParentId())) {
+                throw new InvalidOperationException(
+                        "A cost center cannot be its own parent.", "SELF_PARENT_NOT_ALLOWED");
+            }
+
             // ADAPTED: Fetches the parent and strict filters by the primitive companyId context
             CostCenter parent = repository.findById(request.getParentId())
                     .filter(p -> p.getCompany().getId().equals(companyId))
                     .orElseThrow(() -> new ResourceNotFoundException("CostCenter (parent)", request.getParentId()));
+
+            // NEW: Prevent circular references -- moving a center under one of
+            // its own descendants would create a loop when walking the tree.
+            // Mirrors ChartOfAccountService.isDescendant().
+            if (costCenter.getId() != null && isDescendant(costCenter.getId(), parent)) {
+                throw new InvalidOperationException(
+                        "Circular reference detected -- cannot move cost center under one of its descendants.",
+                        "CIRCULAR_REFERENCE"
+                );
+            }
 
             if (parent.isAllowsMovement()) {
                 log.warn("Hierarchy violation: Parent center {} is an operational node", parent.getId());
@@ -254,6 +272,24 @@ public class CostCenterService extends TenantAwareService {
         dto.setAllowsMovement(entity.isAllowsMovement());
         dto.setParentId(entity.getParent() != null ? entity.getParent().getId() : null);
         return dto;
+    }
+
+    /**
+     * Detects circular references in the cost center hierarchy.
+     * Traverses upward from the candidate parent to check if costCenterId appears
+     * among its ancestors -- mirrors ChartOfAccountService.isDescendant().
+     */
+    private boolean isDescendant(Long costCenterId, CostCenter candidateParent) {
+        CostCenter current = candidateParent;
+        while (current != null) {
+            if (costCenterId.equals(current.getId())) {
+                log.warn("Circular reference detected | costCenterId: {} | candidateParent: {}",
+                        costCenterId, candidateParent.getId());
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private CostCenter findEntityById(Long id, Long companyId) {
