@@ -642,6 +642,13 @@ public class JournalEntryService extends TenantAwareService {
         dto.setDocumentNumber(entry.getDocumentNumber());
         dto.setEntryDate(entry.getEntryDate());
         dto.setDescription(entry.getDescription());
+        // BUG FIX: these three fields exist on the DTO specifically so the
+        // frontend can show annulment status, but were never populated here
+        // -- every response (create/annul/update/find/list) silently
+        // reported annulled=false regardless of the entry's real state.
+        dto.setAnnulled(entry.isAnnulled());
+        dto.setAnnulledAt(entry.getAnnulledAt());
+        dto.setAnnulmentReason(entry.getAnnulmentReason());
 
         List<JournalEntryResponseDTO.ItemResponse> items = entry.getItems().stream()
                 .map(item -> {
