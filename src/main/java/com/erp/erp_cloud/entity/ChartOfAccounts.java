@@ -3,6 +3,7 @@ package com.erp.erp_cloud.entity;
 
 
 import com.erp.erp_cloud.entity.BaseEntity;
+import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.enums.AccountCategory;
 import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.enums.AccountNature;
@@ -215,7 +216,7 @@ public class ChartOfAccounts extends BaseEntity implements Serializable {
      */
     @PrePersist
     @PreUpdate
-    private void validateEntity() {
+    void validateEntity() {
         // Validate code and name
         if (code == null || code.trim().isEmpty()) {
             throw new IllegalArgumentException("Account code cannot be empty");
@@ -268,9 +269,10 @@ public class ChartOfAccounts extends BaseEntity implements Serializable {
         };
 
         if (!isValid) {
-            throw new IllegalArgumentException(
+            throw new InvalidOperationException(
                     String.format("Account category %s does not match account class %s",
-                            accountCategory, accountClass)
+                            accountCategory, accountClass),
+                    "CATEGORY_CLASS_MISMATCH"
             );
         }
     }
@@ -291,9 +293,10 @@ public class ChartOfAccounts extends BaseEntity implements Serializable {
         };
 
         if (!isValid) {
-            throw new IllegalArgumentException(
+            throw new InvalidOperationException(
                     String.format("Financial statement %s does not match account class %s",
-                            financialStatement, accountClass)
+                            financialStatement, accountClass),
+                    "FINANCIAL_STATEMENT_CLASS_MISMATCH"
             );
         }
     }

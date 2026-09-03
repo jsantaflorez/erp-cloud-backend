@@ -240,7 +240,8 @@ public class ChartOfAccountService extends TenantAwareService {
         if (account.getParent() != null && !account.getParent().isActive()) {
             throw new InvalidOperationException(String.format(
                     "Cannot activate account '%s' — parent account '%s' is inactive. Activate the parent first.",
-                    account.getCode(), account.getParent().getCode()));
+                    account.getCode(), account.getParent().getCode()),
+                    "PARENT_INACTIVE_CANNOT_ACTIVATE");
         }
 
         account.setActive(true);
@@ -353,14 +354,16 @@ public class ChartOfAccountService extends TenantAwareService {
         // Posting accounts must be at Level 4 or deeper (minimum 6 digits)
         if (Boolean.TRUE.equals(request.getPostingAccount()) && codeLength < 6) {
             throw new InvalidOperationException(String.format(
-                    "Posting accounts require at least 6 digits (Level 4+). Provided: %d digits.", codeLength));
+                    "Posting accounts require at least 6 digits (Level 4+). Provided: %d digits.", codeLength),
+                    "POSTING_ACCOUNT_CODE_TOO_SHORT");
         }
 
         // Root accounts must have exactly 1 digit
         if (parent == null) {
             if (codeLength != 1) {
                 throw new InvalidOperationException(String.format(
-                        "Root accounts must have exactly 1 digit. Provided: '%s'.", code));
+                        "Root accounts must have exactly 1 digit. Provided: '%s'.", code),
+                        "ROOT_ACCOUNT_CODE_INVALID_LENGTH");
             }
             return;
         }
@@ -371,7 +374,8 @@ public class ChartOfAccountService extends TenantAwareService {
         // Child code must start with parent code (hierarchical prefix rule)
         if (!code.startsWith(parentCode)) {
             throw new InvalidOperationException(String.format(
-                    "Child code '%s' must start with parent code '%s'.", code, parentCode));
+                    "Child code '%s' must start with parent code '%s'.", code, parentCode),
+                    "CHILD_CODE_MUST_START_WITH_PARENT");
         }
 
         // Validate the digit-length jump follows PUC structure
@@ -382,7 +386,8 @@ public class ChartOfAccountService extends TenantAwareService {
         if (!isValidJump) {
             throw new InvalidOperationException(String.format(
                     "Invalid code structure. Parent '%s' (%d digits) requires a child with %d digits. Provided: %d digits.",
-                    parentCode, parentLength, getExpectedLength(parentLength), codeLength));
+                    parentCode, parentLength, getExpectedLength(parentLength), codeLength),
+                    "INVALID_CODE_STRUCTURE");
         }
     }
 
@@ -419,7 +424,8 @@ public class ChartOfAccountService extends TenantAwareService {
         if (!parent.getAccountClass().equals(request.getAccountClass())) {
             throw new InvalidOperationException(String.format(
                     "AccountClass mismatch. Parent '%s' is %s — all sub-accounts must share the same class.",
-                    parent.getCode(), parent.getAccountClass()));
+                    parent.getCode(), parent.getAccountClass()),
+                    "PARENT_CLASS_MISMATCH");
         }
     }
 

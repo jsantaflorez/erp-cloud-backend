@@ -123,8 +123,10 @@ class ChartOfAccountServiceTest {
         ChartOfAccountRequest request = baseRequest("11", false, null);
 
         assertThatThrownBy(() -> service.create(request))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("exactly 1 digit");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("exactly 1 digit");
+                    assertThat(ex.getErrorCode()).isEqualTo("ROOT_ACCOUNT_CODE_INVALID_LENGTH");
+                });
     }
 
     // ============================================================
@@ -140,8 +142,10 @@ class ChartOfAccountServiceTest {
         ChartOfAccountRequest request = baseRequest("21", false, 1L);
 
         assertThatThrownBy(() -> service.create(request))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("must start with parent code");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("must start with parent code");
+                    assertThat(ex.getErrorCode()).isEqualTo("CHILD_CODE_MUST_START_WITH_PARENT");
+                });
     }
 
     @ParameterizedTest(name = "parent code {0} + child code {1} -> valid jump")
@@ -172,8 +176,10 @@ class ChartOfAccountServiceTest {
         ChartOfAccountRequest request = baseRequest("110", false, 1L); // should be 2 digits, not 3
 
         assertThatThrownBy(() -> service.create(request))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("Invalid code structure");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("Invalid code structure");
+                    assertThat(ex.getErrorCode()).isEqualTo("INVALID_CODE_STRUCTURE");
+                });
     }
 
     // ============================================================
@@ -190,8 +196,10 @@ class ChartOfAccountServiceTest {
         ChartOfAccountRequest request = baseRequest("1105", true, 1L); // 4 digits, posting=true
 
         assertThatThrownBy(() -> service.create(request))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("at least 6 digits");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("at least 6 digits");
+                    assertThat(ex.getErrorCode()).isEqualTo("POSTING_ACCOUNT_CODE_TOO_SHORT");
+                });
     }
 
     @Test
@@ -234,8 +242,10 @@ class ChartOfAccountServiceTest {
         request.setAccountClass(AccountClass.LIABILITY); // parent is ASSET
 
         assertThatThrownBy(() -> service.create(request))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("AccountClass mismatch");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("AccountClass mismatch");
+                    assertThat(ex.getErrorCode()).isEqualTo("PARENT_CLASS_MISMATCH");
+                });
     }
 
     @Test
@@ -340,8 +350,10 @@ class ChartOfAccountServiceTest {
         when(repository.findByIdAndCompany(2L, COMPANY_ID)).thenReturn(Optional.of(child));
 
         assertThatThrownBy(() -> service.activate(2L))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("parent account");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("parent account");
+                    assertThat(ex.getErrorCode()).isEqualTo("PARENT_INACTIVE_CANNOT_ACTIVATE");
+                });
     }
 
     @Test
