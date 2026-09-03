@@ -8,6 +8,7 @@ import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
@@ -49,6 +50,7 @@ public class JournalEntryService extends TenantAwareService {
     private final CostCenterRepository costCenterRepository;
     private final DocumentTypeService docTypeService;
     private final AccountingPeriodService accountingPeriodService;
+    private final CompanyRepository companyRepository;
 
     // ═══════════════════════════════════════════════════════════
     // CREATE OPERATIONS
@@ -145,10 +147,12 @@ public class JournalEntryService extends TenantAwareService {
         entry.setEntryDate(request.getEntryDate());
         entry.setDescription(request.getDescription());
 
-        // Asignamos la relación simulada o directa según tu modelo de datos de TenantAware
-        // Si tu entidad JournalEntry requiere la entidad Company completa, puedes usar un proxy:
-        // entry.setCompany(entityManager.getReference(Company.class, companyId));
-        // O si maneja directamente el ID numérico: entry.setCompanyId(companyId);
+        // BUG FIX: company was never actually assigned here (only mentioned in a
+        // comment), so every journal entry save hit the DB's NOT NULL constraint on
+        // company_id and surfaced as a confusing "required field missing" error with
+        // no field the user could see on the form. Same class of bug already fixed
+        // this session in TaxService/ThirdPartyService.
+        entry.setCompany(companyRepository.getReferenceById(companyId));
 
         // Get next consecutive number with pessimistic lock
         Long nextNumber = docTypeService.getNextConsecutive(docType.getId());

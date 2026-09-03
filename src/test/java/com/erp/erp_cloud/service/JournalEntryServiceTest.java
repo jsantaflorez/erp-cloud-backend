@@ -6,6 +6,7 @@ import com.erp.erp_cloud.entity.*;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
@@ -58,6 +59,7 @@ class JournalEntryServiceTest {
     @Mock private CostCenterRepository costCenterRepository;
     @Mock private DocumentTypeService docTypeService;
     @Mock private AccountingPeriodService accountingPeriodService;
+    @Mock private CompanyRepository companyRepository;
 
     private JournalEntryService service;
     private Company testCompany;
@@ -71,10 +73,11 @@ class JournalEntryServiceTest {
         TenantContext.setCurrentTenant(COMPANY_ID);
 
         service = new JournalEntryService(repository, accountRepository, thirdPartyRepository,
-                costCenterRepository, docTypeService, accountingPeriodService);
+                costCenterRepository, docTypeService, accountingPeriodService, companyRepository);
 
         testCompany = new Company();
         testCompany.setId(COMPANY_ID);
+        when(companyRepository.getReferenceById(COMPANY_ID)).thenReturn(testCompany);
 
         testDocType = new DocumentType();
         testDocType.setId(DOC_TYPE_ID);
@@ -180,6 +183,22 @@ class JournalEntryServiceTest {
         assertThat(result.getDocumentNumber()).isEqualTo("FV-1");
         assertThat(result.getItems()).hasSize(2);
         verify(accountingPeriodService).validateDateIsOpen(any(LocalDate.class), org.mockito.ArgumentMatchers.eq(COMPANY_ID));
+    }
+
+    @Test
+    @DisplayName("create() always binds the entry header to the current tenant's company")
+    void create_bindsCompany_regressionGuardForNullCompanyIdBug() {
+        // REGRESSION GUARD: createEntryHeader() once left entry.setCompany(...)
+        // as a comment only, so every save hit the DB's NOT NULL constraint on
+        // company_id -- surfacing as a "required field missing" error with no
+        // field visibly missing on the form. Same class of bug fixed earlier
+        // this session in TaxService/ThirdPartyService.
+        service.create(balancedRequest(LocalDate.now()));
+
+        ArgumentCaptor<JournalEntry> captor = ArgumentCaptor.forClass(JournalEntry.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getCompany()).isEqualTo(testCompany);
+        assertThat(captor.getValue().getCompany().getId()).isEqualTo(COMPANY_ID);
     }
 
     @Test
