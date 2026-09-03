@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
@@ -100,10 +101,42 @@ public class AccountingPeriodService extends TenantAwareService {
 
     /**
      * Special Annual Fiscal Close (Locks the whole year).
+     * Requires every month from January to November to already be
+     * individually closed -- the annual seal is the last step of the
+     * close cycle, not a substitute for the monthly ones.
      */
     @Transactional
     public void closeYear(Integer year, String closedBy, String notes) {
+        Long companyId = TenantContext.getCurrentTenant();
+        validateYearMonth(year, 12);
+        validateAllMonthsClosedBeforeYearEnd(companyId, year);
         performClose(year, 12, closedBy, notes, true);
+    }
+
+    /**
+     * Ensures months 1-11 of the fiscal year are already individually
+     * closed before the year can be sealed. A month with no period record
+     * at all counts as "not closed" here -- stricter than the general
+     * validateDateIsOpen()/isPeriodClosed() convention elsewhere in this
+     * service, where a missing record defaults to open, because year-end
+     * closing must be an explicit, reviewed step for every month.
+     */
+    private void validateAllMonthsClosedBeforeYearEnd(Long companyId, Integer year) {
+        List<AccountingPeriod> periods = repository.findByCompanyIdAndYear(companyId, year);
+
+        List<Integer> notClosed = IntStream.rangeClosed(1, 11)
+                .filter(month -> periods.stream()
+                        .noneMatch(p -> p.getMonth().equals(month) && !p.isOpen()))
+                .boxed()
+                .collect(Collectors.toList());
+
+        if (!notClosed.isEmpty()) {
+            throw new InvalidOperationException(
+                    "Cannot close fiscal year " + year + ": months " + notClosed
+                            + " must be closed individually first.",
+                    "MONTHS_NOT_CLOSED_BEFORE_YEAR_END"
+            );
+        }
     }
 
     private AccountingPeriodResponseDTO performClose(Integer year, Integer month, String closedBy, String notes, boolean isYearEnd) {
