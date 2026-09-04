@@ -202,6 +202,44 @@ class JournalEntryServiceTest {
     }
 
     @Test
+    @DisplayName("create() response exposes the real accountId/thirdPartyId/costCenterId/documentTypeId, not just display strings (REGRESSION GUARD)")
+    void create_response_exposesRealIdsForEditing() {
+        // BUG FIX GUARD: the response DTO used to carry only display
+        // strings (accountCode/accountName, thirdPartyIdNumber/Name,
+        // costCenterName) -- enough to *show* an entry but not enough for
+        // a frontend edit form to know which option to pre-select in each
+        // picker. Also covers documentTypeId at the header level.
+        debitAccount.setRequiresThirdParty(true);
+        debitAccount.setRequiresCostCenter(true);
+
+        ThirdParty tp = new ThirdParty();
+        tp.setId(THIRD_PARTY_ID);
+        tp.setCompany(testCompany);
+        tp.setActive(true);
+        tp.setDocumentNumber("900373115");
+        when(thirdPartyRepository.findById(THIRD_PARTY_ID)).thenReturn(Optional.of(tp));
+
+        CostCenter cc = new CostCenter();
+        cc.setId(COST_CENTER_ID);
+        cc.setCompany(testCompany);
+        cc.setActive(true);
+        cc.setAllowsMovement(true);
+        when(costCenterRepository.findById(COST_CENTER_ID)).thenReturn(Optional.of(cc));
+
+        JournalEntryRequest request = balancedRequest(LocalDate.now());
+        request.getItems().get(0).setThirdPartyId(THIRD_PARTY_ID);
+        request.getItems().get(0).setCostCenterId(COST_CENTER_ID);
+
+        JournalEntryResponseDTO result = service.create(request);
+
+        assertThat(result.getDocumentTypeId()).isEqualTo(DOC_TYPE_ID);
+        assertThat(result.getItems().get(0).getAccountId()).isEqualTo(DEBIT_ACCOUNT_ID);
+        assertThat(result.getItems().get(0).getThirdPartyId()).isEqualTo(THIRD_PARTY_ID);
+        assertThat(result.getItems().get(0).getCostCenterId()).isEqualTo(COST_CENTER_ID);
+        assertThat(result.getItems().get(1).getAccountId()).isEqualTo(CREDIT_ACCOUNT_ID);
+    }
+
+    @Test
     @DisplayName("create() rejects a null entry date")
     void create_nullEntryDate_throws() {
         assertThatThrownBy(() -> service.create(balancedRequest(null)))
@@ -534,8 +572,10 @@ class JournalEntryServiceTest {
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
 
         assertThatThrownBy(() -> service.annul(999L, annulmentRequest("x")))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("already annulled");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("already annulled");
+                    assertThat(ex.getErrorCode()).isEqualTo("ENTRY_ALREADY_ANNULLED");
+                });
     }
 
     @Test
@@ -546,8 +586,10 @@ class JournalEntryServiceTest {
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
 
         assertThatThrownBy(() -> service.annul(999L, annulmentRequest("x")))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("inactive");
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("inactive");
+                    assertThat(ex.getErrorCode()).isEqualTo("ENTRY_INACTIVE_IMMUTABLE");
+                });
     }
 
     @Test
@@ -605,6 +647,37 @@ class JournalEntryServiceTest {
         assertThat(result.getDescription()).isEqualTo("Corrected description");
         assertThat(result.getItems()).hasSize(2);
         assertThat(result.getItems().get(0).getDebit()).isEqualByComparingTo("250.00");
+    }
+
+    @Test
+    @DisplayName("update() rejects editing an annulled entry (REGRESSION GUARD)")
+    void update_annulledEntry_throws() {
+        // BUG FIX GUARD: update() previously had no check for isAnnulled() at
+        // all, so editing an annulled entry would silently overwrite the
+        // zeroed items annul() set, undoing its neutralization guarantee.
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.setAnnulled(true);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        assertThatThrownBy(() -> service.update(999L, balancedRequest(entry.getEntryDate())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("annulled");
+                    assertThat(ex.getErrorCode()).isEqualTo("ENTRY_ANNULLED_IMMUTABLE");
+                });
+    }
+
+    @Test
+    @DisplayName("update() rejects editing an inactive entry (REGRESSION GUARD)")
+    void update_inactiveEntry_throws() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.setActive(false);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        assertThatThrownBy(() -> service.update(999L, balancedRequest(entry.getEntryDate())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("inactive");
+                    assertThat(ex.getErrorCode()).isEqualTo("ENTRY_INACTIVE_IMMUTABLE");
+                });
     }
 
     @Test

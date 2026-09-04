@@ -234,11 +234,13 @@ public class JournalEntryService extends TenantAwareService {
 
         // 3. STATE VALIDATION
         if (entry.isAnnulled()) {
-            throw new InvalidOperationException("Journal entry is already annulled.");
+            throw new InvalidOperationException(
+                    "Journal entry is already annulled.", "ENTRY_ALREADY_ANNULLED");
         }
 
         if (!entry.isActive()) {
-            throw new InvalidOperationException("Cannot annul an inactive (deleted) journal entry.");
+            throw new InvalidOperationException(
+                    "Cannot annul an inactive (deleted) journal entry.", "ENTRY_INACTIVE_IMMUTABLE");
         }
 
         log.info("Annulling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
@@ -277,7 +279,22 @@ public class JournalEntryService extends TenantAwareService {
                 .filter(e -> e.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
 
-        // 2. PERIOD VALIDATION
+        // 2. STATE VALIDATION
+        // BUG FIX: an annulled entry's financial effect is permanently
+        // neutralized by annul() (items zeroed, description prefixed) --
+        // editing it here would silently undo that neutralization and
+        // corrupt the audit trail. Mirrors the guard annul() already
+        // applies to itself.
+        if (existingEntry.isAnnulled()) {
+            throw new InvalidOperationException(
+                    "Cannot edit an annulled journal entry.", "ENTRY_ANNULLED_IMMUTABLE");
+        }
+        if (!existingEntry.isActive()) {
+            throw new InvalidOperationException(
+                    "Cannot edit an inactive journal entry.", "ENTRY_INACTIVE_IMMUTABLE");
+        }
+
+        // 3. PERIOD VALIDATION
         accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), companyId);
 
         if (!existingEntry.getEntryDate().equals(request.getEntryDate())) {
@@ -285,17 +302,17 @@ public class JournalEntryService extends TenantAwareService {
             accountingPeriodService.validateDateIsOpen(request.getEntryDate(), companyId);
         }
 
-        // 3. FINANCIAL VALIDATION
+        // 4. FINANCIAL VALIDATION
         validateBalance(request);
 
         log.info("Updating journal entry {} (ID: {}) for company ID {}",
                 existingEntry.getDocumentNumber(), id, companyId);
 
-        // 4. HEADER UPDATE
+        // 5. HEADER UPDATE
         existingEntry.setEntryDate(request.getEntryDate());
         existingEntry.setDescription(request.getDescription());
 
-        // 5. ITEMS UPDATE
+        // 6. ITEMS UPDATE
         existingEntry.getItems().clear();
         processLineItems(existingEntry, request, companyId);
 
@@ -644,6 +661,7 @@ public class JournalEntryService extends TenantAwareService {
         JournalEntryResponseDTO dto = new JournalEntryResponseDTO();
         dto.setId(entry.getId());
         dto.setDocumentNumber(entry.getDocumentNumber());
+        dto.setDocumentTypeId(entry.getDocumentType().getId());
         dto.setEntryDate(entry.getEntryDate());
         dto.setDescription(entry.getDescription());
         // BUG FIX: these three fields exist on the DTO specifically so the
@@ -658,6 +676,7 @@ public class JournalEntryService extends TenantAwareService {
                 .map(item -> {
                     JournalEntryResponseDTO.ItemResponse i = new JournalEntryResponseDTO.ItemResponse();
                     i.setId(item.getId());
+                    i.setAccountId(item.getAccount().getId());
                     i.setAccountCode(item.getAccount().getCode());
                     i.setAccountName(item.getAccount().getName());
                     i.setDebit(item.getDebit());
@@ -665,10 +684,12 @@ public class JournalEntryService extends TenantAwareService {
                     i.setDescription(item.getDescription());
 
                     if (item.getThirdParty() != null) {
+                        i.setThirdPartyId(item.getThirdParty().getId());
                         i.setThirdPartyIdNumber(item.getThirdParty().getDocumentNumber());
                         i.setThirdPartyName(item.getThirdParty().getLegalDisplayName());
                     }
                     if (item.getCostCenter() != null) {
+                        i.setCostCenterId(item.getCostCenter().getId());
                         i.setCostCenterName(item.getCostCenter().getName());
                     }
                     return i;
