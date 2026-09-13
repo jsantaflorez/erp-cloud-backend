@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.entity;
 
 import com.erp.erp_cloud.enums.TaxRegime;
+import com.erp.erp_cloud.enums.ChartTemplateType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.envers.Audited;
@@ -97,4 +98,16 @@ public class Company implements Serializable {
 
     @Column(name = "logo_url")
     private String logoUrl;
+
+    // =====================
+    // ACCOUNTING
+    // =====================
+
+    // Optional per company: a cooperative or other non-commercial entity
+    // will not use the commercial PUC template, so this stays nullable.
+    // Null means no chart-of-accounts template is configured (no name
+    // suggestions offered when creating Plan de Cuentas entries).
+    @Enumerated(EnumType.STRING)
+    @Column(name = "chart_template", length = 20)
+    private ChartTemplateType chartTemplate;
 }
