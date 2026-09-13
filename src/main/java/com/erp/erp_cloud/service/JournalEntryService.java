@@ -442,12 +442,12 @@ public class JournalEntryService extends TenantAwareService {
     // READ OPERATIONS
     // ═══════════════════════════════════════════════════════════
 
-    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate start, LocalDate end, Pageable pageable) {
+    public Page<JournalEntryResponseDTO> listEntries(String searchTerm, LocalDate start, LocalDate end, Long documentTypeId, Pageable pageable) {
 
         Long companyId = currentTenantId();
         log.debug("Listing journal entries for company ID: {}", companyId);
 
-        return repository.searchEntries(companyId, searchTerm, start, end, pageable)
+        return repository.searchEntries(companyId, searchTerm, start, end, documentTypeId, pageable)
                 .map(this::mapToResponseDTO);
     }
 

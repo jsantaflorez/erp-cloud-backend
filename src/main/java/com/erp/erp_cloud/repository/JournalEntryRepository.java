@@ -26,6 +26,18 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
      * Search journal entries with filters.
      * Excludes logically deleted records (active = false).
      * ADAPTED: Uses companyId (Long) and synchronizes countQuery filters to prevent Pageable discrepancies.
+     *
+     * BUG FIX (2026-09-10): documentNumber used to match only as a PREFIX
+     * (CONCAT(:searchTerm, '%')) while description matched anywhere
+     * (CONCAT('%', :searchTerm, '%')) -- the only inconsistent case in the
+     * whole codebase (compare ThirdPartyRepository, which already does a
+     * substring match on documentNumber too). A user searching for a
+     * fragment in the middle of a document number (e.g. "0045" inside
+     * "EG-0045") got zero results and no indication why. Both fields now
+     * match anywhere, like everywhere else in the app.
+     *
+     * Also added: documentTypeId, so entries can be filtered by document
+     * type (Recibo de Caja, Egreso, etc.), not just by number/description/date.
      */
     @Query(value = "SELECT j FROM JournalEntry j " +
             "JOIN FETCH j.documentType " +
@@ -33,22 +45,25 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             "AND j.active = true " +
             "AND (:searchTerm IS NULL OR " +
             "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-            "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
+            "     LOWER(j.documentNumber) LIKE LOWER(CONCAT('%', :searchTerm, '%'))) " +
             "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
-            "AND (:endDate IS NULL OR j.entryDate <= :endDate)",
+            "AND (:endDate IS NULL OR j.entryDate <= :endDate) " +
+            "AND (:documentTypeId IS NULL OR j.documentType.id = :documentTypeId)",
             countQuery = "SELECT COUNT(j) FROM JournalEntry j " +
                     "WHERE j.company.id = :companyId " +
                     "AND j.active = true " +
                     "AND (:searchTerm IS NULL OR " +
                     "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
-                    "     LOWER(j.documentNumber) LIKE LOWER(CONCAT(:searchTerm, '%'))) " +
+                    "     LOWER(j.documentNumber) LIKE LOWER(CONCAT('%', :searchTerm, '%'))) " +
                     "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
-                    "AND (:endDate IS NULL OR j.entryDate <= :endDate)")
+                    "AND (:endDate IS NULL OR j.entryDate <= :endDate) " +
+                    "AND (:documentTypeId IS NULL OR j.documentType.id = :documentTypeId)")
     Page<JournalEntry> searchEntries(
             @Param("companyId") Long companyId,
             @Param("searchTerm") String searchTerm,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
+            @Param("documentTypeId") Long documentTypeId,
             Pageable pageable);
 
     // ═══════════════════════════════════════════════════════════

@@ -11,6 +11,10 @@ import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -779,5 +783,53 @@ class JournalEntryServiceTest {
 
         assertThat(report.getCompanyName()).isEqualTo("ERP Demo Company S.A.S.");
         assertThat(report.getGeneratedAt()).isNotNull();
+    }
+
+    // ============================================================
+    // listEntries() -- regression coverage for the 2026-09-10 fixes:
+    // documentNumber search used to match only as a PREFIX while
+    // description matched anywhere (the only inconsistent field in the
+    // app), and there was no way to filter by document type at all.
+    // These tests can't exercise the JPQL itself (the repository is
+    // mocked, same as everywhere else in this file), but they pin the
+    // service's contract with the repository so a future signature or
+    // wiring change can't silently drop a filter again.
+    // ============================================================
+
+    @Test
+    @DisplayName("listEntries() passes searchTerm, date range and documentTypeId straight through to the repository")
+    void listEntries_passesAllFiltersToRepository() {
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<JournalEntry> page = new PageImpl<>(List.of(existingEntry(LocalDate.now())));
+        when(repository.searchEntries(
+                eq(COMPANY_ID), eq("0045"), eq(LocalDate.of(2026, 1, 1)), eq(LocalDate.of(2026, 12, 31)),
+                eq(3L), eq(pageable)
+        )).thenReturn(page);
+
+        Page<JournalEntryResponseDTO> result = service.listEntries(
+                "0045", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31), 3L, pageable
+        );
+
+        assertThat(result.getContent()).hasSize(1);
+        verify(repository).searchEntries(
+                eq(COMPANY_ID), eq("0045"), eq(LocalDate.of(2026, 1, 1)), eq(LocalDate.of(2026, 12, 31)),
+                eq(3L), eq(pageable)
+        );
+    }
+
+    @Test
+    @DisplayName("listEntries() passes a null documentTypeId through when no document type filter is requested")
+    void listEntries_withoutDocumentTypeFilter_passesNull() {
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<JournalEntry> page = new PageImpl<>(List.of(existingEntry(LocalDate.now())));
+        when(repository.searchEntries(
+                eq(COMPANY_ID), any(), any(), any(), eq((Long) null), eq(pageable)
+        )).thenReturn(page);
+
+        service.listEntries(null, null, null, null, pageable);
+
+        verify(repository).searchEntries(
+                eq(COMPANY_ID), eq((String) null), eq((LocalDate) null), eq((LocalDate) null), eq((Long) null), eq(pageable)
+        );
     }
 }

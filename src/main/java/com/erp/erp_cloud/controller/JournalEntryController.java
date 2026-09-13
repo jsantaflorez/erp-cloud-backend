@@ -164,30 +164,33 @@ public class JournalEntryController {
      * Lists all journal entries with optional filtering and pagination.
      *
      * Query Parameters:
-     * - searchTerm: Searches in document number and description (optional)
+     * - searchTerm: Searches in document number and description (optional, matches anywhere in either field)
      * - startDate: Filter entries from this date onwards (optional)
      * - endDate: Filter entries up to this date (optional)
+     * - documentTypeId: Filter entries by document type (optional)
      * - page: Page number (0-based, default: 0)
      * - size: Page size (default: 20)
      * - sort: Sort criteria (e.g., "entryDate,desc")
      *
      * Examples:
      * - GET /api/v1/journal-entries?page=0&size=20
-     * - GET /api/v1/journal-entries?searchTerm=RC-001
+     * - GET /api/v1/journal-entries?searchTerm=0045
      * - GET /api/v1/journal-entries?startDate=2026-01-01&endDate=2026-12-31
+     * - GET /api/v1/journal-entries?documentTypeId=3
      * - GET /api/v1/journal-entries?startDate=2026-05-01&sort=entryDate,desc
      *
      * @param searchTerm Optional search term
      * @param startDate Optional start date filter
      * @param endDate Optional end date filter
+     * @param documentTypeId Optional document type filter
      * @param pageable Pagination parameters
      * @return Paginated list of journal entries
      */
     @GetMapping
     @Operation(
             summary = "List journal entries",
-            description = "Retrieves journal entries with support for pagination, date range filters, and search. " +
-                    "Search works on document number and description fields."
+            description = "Retrieves journal entries with support for pagination, date range filters, document type filter, and search. " +
+                    "Search matches anywhere in the document number and description fields."
     )
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
             responseCode = "200",
@@ -199,10 +202,11 @@ public class JournalEntryController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long documentTypeId,
             @ParameterObject Pageable pageable) {
 
         Page<JournalEntryResponseDTO> data = service.listEntries(
-                searchTerm, startDate, endDate, pageable
+                searchTerm, startDate, endDate, documentTypeId, pageable
         );
 
         return ResponseEntity.ok(new ApiResponse<>(
