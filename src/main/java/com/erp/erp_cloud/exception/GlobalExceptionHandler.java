@@ -42,9 +42,22 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateResourceException.class)
     public ResponseEntity<ApiResponse<Void>> handleDuplicateResource(DuplicateResourceException ex, HttpServletRequest request) {
         log.warn("Duplicate resource: {}", ex.getMessage());
+        // BUG FIX (2026-09-10): this used to return ex.getMessage() -- a
+        // hardcoded English sentence ("ChartOfAccount already exists with
+        // code: 61") -- straight to the frontend regardless of the app's
+        // language. Every proactive duplicate check across the app
+        // (ChartOfAccounts, DocumentType, Tax, ThirdParty) goes through
+        // this one exception type, so this one line was silently breaking
+        // Spanish for all four modules. DUPLICATE_VALUE is the exact same
+        // stable code the DB-constraint fallback below already returns
+        // for this same situation (see extractConstraintMessage()) --
+        // apiErrors.js already translates it in both languages, so no new
+        // code or frontend change is needed. ex.getMessage() (with the
+        // specific resource/field/value) stays in the log line above for
+        // debugging; only the API response text changes.
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
-                .body(buildError(ex.getMessage(), request));
+                .body(buildError("DUPLICATE_VALUE", request));
     }
 
 
