@@ -259,16 +259,13 @@ class JournalEntryServiceTest {
     }
 
     @Test
-    @DisplayName("create() rejects an entry date older than 90 days")
-    void create_entryDateOlderThan90Days_throws() {
-        assertThatThrownBy(() -> service.create(balancedRequest(LocalDate.now().minusDays(91))))
-                .isInstanceOf(InvalidOperationException.class);
-    }
-
-    @Test
-    @DisplayName("create() allows an entry date exactly 90 days back (inclusive boundary)")
-    void create_entryDateExactly90DaysBack_succeeds() {
-        JournalEntryResponseDTO result = service.create(balancedRequest(LocalDate.now().minusDays(90)));
+    @DisplayName("create() allows an entry date far in the past -- catching up a prior fiscal year is normal, not an edge case")
+    void create_veryOldEntryDate_succeeds() {
+        // No fixed "how far back" cutoff: e.g. posting into 2025 while 2026
+        // is already active must work. AccountingPeriodService's explicit
+        // period lock -- not a day-count -- is what governs this; see
+        // create_periodClosed_propagates below for that boundary.
+        JournalEntryResponseDTO result = service.create(balancedRequest(LocalDate.now().minusYears(1)));
 
         assertThat(result).isNotNull();
     }
@@ -721,13 +718,13 @@ class JournalEntryServiceTest {
     }
 
     @Test
-    @DisplayName("update() does not re-validate the 90-day/future window when the entry date is unchanged, even if that date is now older than 90 days")
-    void update_dateUnchanged_skipsAgeValidation() {
-        LocalDate oldDate = LocalDate.now().minusDays(200); // would fail validateEntryDate() if re-checked
-        JournalEntry entry = existingEntry(oldDate);
+    @DisplayName("update() does not re-validate the date window when the entry date is unchanged, even if that date would now fail validation")
+    void update_dateUnchanged_skipsDateValidation() {
+        LocalDate futureDate = LocalDate.now().plusDays(5); // would fail validateEntryDate() if re-checked (future date)
+        JournalEntry entry = existingEntry(futureDate);
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
 
-        JournalEntryRequest request = balancedRequest(oldDate); // same date, unchanged
+        JournalEntryRequest request = balancedRequest(futureDate); // same date, unchanged
 
         JournalEntryResponseDTO result = service.update(999L, request);
 

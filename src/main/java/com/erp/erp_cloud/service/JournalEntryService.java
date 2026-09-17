@@ -329,22 +329,21 @@ public class JournalEntryService extends TenantAwareService {
 
     private void validateEntryDate(LocalDate date) {
         if (date == null) {
-            throw new InvalidOperationException("Entry date is required");
+            throw new InvalidOperationException("Entry date is required", "ENTRY_DATE_REQUIRED");
         }
 
-        LocalDate today = LocalDate.now();
-        if (date.isAfter(today)) {
-            throw new InvalidOperationException("Entry date cannot be in the future");
+        if (date.isAfter(LocalDate.now())) {
+            throw new InvalidOperationException("Entry date cannot be in the future", "ENTRY_DATE_IN_FUTURE");
         }
 
-        LocalDate minAllowedDate = today.minusDays(90);
-        if (date.isBefore(minAllowedDate)) {
-            throw new InvalidOperationException(
-                    String.format("Entry date cannot be older than %s (90 days back). " +
-                            "For older dates, please contact system administrator.", minAllowedDate)
-            );
-        }
-
+        // Deliberately no fixed "how far back" cutoff here. Catching up on a
+        // prior fiscal year (e.g. finishing 2025 postings while 2026 is
+        // already active) is normal, expected work, not an edge case. The
+        // real control over how far back an entry may be dated is the
+        // explicit period lock -- accountingPeriodService.validateDateIsOpen(),
+        // invoked separately by create()/update() -- which lets each company
+        // close a month/year once it's actually done, instead of an arbitrary
+        // day-count that blocks legitimate backdated work.
         log.debug("Entry date validated: {}", date);
     }
 
