@@ -102,6 +102,17 @@ class AccountingPeriodServiceTest {
         assertThat(saved.getClosingNotes()).isEqualTo("month-end close");
         assertThat(saved.getClosedAt()).isNotNull();
         assertThat(result.isOpen()).isFalse();
+
+        // FIX regression guard: mapToResponseDTO() used to silently drop
+        // periodCode/closingNotes/reopenedAt/reopenedBy/reopeningNotes even
+        // though the DTO declares all of them -- the Periodos Contables
+        // screen needs the full audit trail, not just closedBy/closedAt.
+        assertThat(result.getPeriodCode()).isEqualTo("2026-03");
+        assertThat(result.getClosingNotes()).isEqualTo("month-end close");
+        assertThat(result.getClosedBy()).isEqualTo("jaime");
+        assertThat(result.getReopenedAt()).isNull();
+        assertThat(result.getReopenedBy()).isNull();
+        assertThat(result.getReopeningNotes()).isNull();
     }
 
     @Test
@@ -211,6 +222,11 @@ class AccountingPeriodServiceTest {
         assertThat(existing.getReopeningNotes()).isEqualTo("correction needed");
         assertThat(existing.getReopenedAt()).isNotNull();
         assertThat(result.isOpen()).isTrue();
+
+        // FIX regression guard: same DTO-mapping gap as closePeriod() above.
+        assertThat(result.getReopenedBy()).isEqualTo("jaime");
+        assertThat(result.getReopeningNotes()).isEqualTo("correction needed");
+        assertThat(result.getReopenedAt()).isNotNull();
     }
 
     @Test

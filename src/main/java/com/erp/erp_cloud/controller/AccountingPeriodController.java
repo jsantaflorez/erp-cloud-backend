@@ -5,12 +5,15 @@ import com.erp.erp_cloud.dto.AccountingPeriodRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodResponseDTO;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.exception.InvalidOperationException;
+import com.erp.erp_cloud.security.UserPrincipal;
 import com.erp.erp_cloud.service.AccountingPeriodService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,6 +25,22 @@ import java.util.List;
 public class AccountingPeriodController {
 
     private final AccountingPeriodService service;
+
+    /**
+     * Resolves the authenticated username for the closedBy/reopenedBy audit
+     * fields. FIX: every close/reopen action used to hardcode "system"
+     * (one even had a literal "// TODO: SecurityContext"), so the audit
+     * trail this entity was clearly designed for -- closedBy, reopenedBy --
+     * never actually recorded who did it. Mirrors how TenantFilter reads
+     * the authenticated principal.
+     */
+    private String currentUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof UserPrincipal principal) {
+            return principal.getUsername();
+        }
+        return "system";
+    }
 
     /**
      * Gets all accounting periods for the current company.
@@ -82,7 +101,7 @@ public class AccountingPeriodController {
             @PathVariable Integer month,
             @Valid @RequestBody AccountingPeriodActionRequest request) { // Use the new ActionRequest
 
-        String currentUser = "system";
+        String currentUser = currentUsername();
         AccountingPeriodResponseDTO period = service.closePeriod(year, month, currentUser, request.getNotes());
         return ResponseEntity.ok(new ApiResponse<>("Period closed", true, period));
     }
@@ -96,7 +115,7 @@ public class AccountingPeriodController {
             @PathVariable Integer year,
             @Valid @RequestBody AccountingPeriodActionRequest request) { // Consistent UI
 
-        String currentUser = "system";
+        String currentUser = currentUsername();
         service.closeYear(year, currentUser, request.getNotes());
         return ResponseEntity.ok(new ApiResponse<>("Fiscal year locked", true, null));
     }
@@ -115,7 +134,7 @@ public class AccountingPeriodController {
             throw new InvalidOperationException("Notes are required when reopening a period");
         }
 
-        String currentUser = "system";
+        String currentUser = currentUsername();
         AccountingPeriodResponseDTO period = service.reopenPeriod(year, month, currentUser, request.getNotes());
 
         return ResponseEntity.ok(new ApiResponse<>(
@@ -134,7 +153,7 @@ public class AccountingPeriodController {
             @PathVariable Integer year,
             @Valid @RequestBody AccountingPeriodActionRequest request) {
 
-        String currentUser = "system"; // TODO: SecurityContext
+        String currentUser = currentUsername();
         service.reopenYear(year, currentUser, request.getNotes());
 
         return ResponseEntity.ok(new ApiResponse<>(

@@ -211,19 +211,19 @@ public class AccountingPeriodService extends TenantAwareService {
      */
     @Transactional(readOnly = true)
     public void validateDateIsOpen(LocalDate date, Long companyId) {
-        if (date == null) throw new InvalidOperationException("Date is required");
+        if (date == null) throw new InvalidOperationException("Date is required", "PERIOD_DATE_REQUIRED");
 
         int year = date.getYear();
         int month = date.getMonthValue();
 
         if (repository.existsByCompanyIdAndYearAndYearCloseTrue(companyId, year)) {
-            throw new InvalidOperationException("The Fiscal Year " + year + " is CLOSED.");
+            throw new InvalidOperationException("The Fiscal Year " + year + " is CLOSED.", "FISCAL_YEAR_CLOSED");
         }
 
         repository.findByCompanyIdAndYearAndMonth(companyId, year, month)
                 .ifPresent(p -> {
                     if (!p.isOpen()) {
-                        throw new InvalidOperationException("The period " + year + "-" + month + " is CLOSED.");
+                        throw new InvalidOperationException("The period " + year + "-" + month + " is CLOSED.", "ACCOUNTING_PERIOD_CLOSED");
                     }
                 });
     }
@@ -233,19 +233,29 @@ public class AccountingPeriodService extends TenantAwareService {
     // ═══════════════════════════════════════════════════════════
 
     private void validateYearMonth(Integer year, Integer month) {
-        if (year < 1900 || year > 2100) throw new InvalidOperationException("Invalid year");
-        if (month < 1 || month > 12) throw new InvalidOperationException("Invalid month");
+        if (year < 1900 || year > 2100) throw new InvalidOperationException("Invalid year", "INVALID_YEAR");
+        if (month < 1 || month > 12) throw new InvalidOperationException("Invalid month", "INVALID_MONTH");
     }
 
     private AccountingPeriodResponseDTO mapToResponseDTO(AccountingPeriod entity) {
+        // FIX: this used to silently drop periodCode, closingNotes,
+        // reopenedAt, reopenedBy and reopeningNotes even though the DTO
+        // declares all of them -- callers (and the upcoming Periodos
+        // Contables screen) need the full audit trail, not just who/when
+        // it was last closed.
         return AccountingPeriodResponseDTO.builder()
                 .id(entity.getId())
                 .year(entity.getYear())
                 .month(entity.getMonth())
+                .periodCode(entity.getPeriodCode())
                 .isOpen(entity.isOpen())
                 .isYearClose(entity.isYearClose())
                 .closedAt(entity.getClosedAt())
                 .closedBy(entity.getClosedBy())
+                .closingNotes(entity.getClosingNotes())
+                .reopenedAt(entity.getReopenedAt())
+                .reopenedBy(entity.getReopenedBy())
+                .reopeningNotes(entity.getReopeningNotes())
                 .build();
     }
 }
