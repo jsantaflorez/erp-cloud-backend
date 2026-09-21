@@ -1,0 +1,5 @@
+# Plantilla de application-local.properties (este SI se sube a git).
+# Copia este archivo como "application-local.properties" (sin .example) y
+# rellena los valores reales. Ese archivo esta en .gitignore y nunca se sube.
+DB_PASSWORD=tu_password_de_mysql_aqui
+JWT_SECRET=un_valor_aleatorio_largo_aqui
