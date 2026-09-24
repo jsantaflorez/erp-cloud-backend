@@ -177,6 +177,87 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("endCode") String endCode
     );
 
+    /**
+     * Opening balance per cost center, as of a cutoff date, for the
+     * "Auxiliar por Centro de Costo" report (formerly a period-only
+     * "Balance por Centro de Costo" -- upgraded 2026-09-21 after the user
+     * showed a real report from their previous system carrying an actual
+     * S.I./Nuevo Saldo per cost center, not just period totals: a cost
+     * center attached to a balance-sheet account, like inventory or
+     * receivables, genuinely accumulates a balance the same way the
+     * account itself does).
+     *
+     * IMPORTANT: unlike getOpeningBalancesForAuxiliary (grouped by account,
+     * where a.nature is constant per group), one cost center can span
+     * MULTIPLE accounts with DIFFERENT natures (e.g. an expense account
+     * and an income account both tagged to the same cost center). The
+     * CASE on a.nature must therefore be evaluated PER ROW, inside the
+     * SUM -- never as one CASE wrapped around the whole aggregate the way
+     * the per-account query does it, which would be wrong (and wouldn't
+     * even compile as HQL, since a.nature isn't a GROUP BY key here).
+     *
+     * Optional account range narrows this to specific accounts (e.g. just
+     * cartera or inventory), same convention as the Auxiliary Ledger's
+     * startCode/endCode. Optional costCenterCode narrows to one cost
+     * center; null means all of them, same as "TODOS LOS CENTROS DE
+     * COSTO" in the reference report.
+     */
+    @Query("""
+        SELECT
+            cc.code,
+            cc.name,
+            COALESCE(SUM(
+                CASE WHEN a.nature = 'D' THEN i.debit - i.credit ELSE i.credit - i.debit END
+            ), 0) as openingBalance
+        FROM JournalEntryItem i
+        JOIN i.costCenter cc
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE je.company.id = :companyId
+          AND je.active = true
+          AND je.entryDate < :startDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND cc.code = COALESCE(:costCenterCode, cc.code)
+        GROUP BY cc.code, cc.name
+        ORDER BY cc.code ASC
+    """)
+    List<Object[]> getCostCenterOpeningBalances(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("costCenterCode") String costCenterCode
+    );
+
+    /**
+     * All transaction items within a date range for the "Auxiliar por
+     * Centro de Costo" report, restricted to items that actually have a
+     * cost center assigned (the inner join to i.costCenter does that) and
+     * optionally to one specific cost center and/or account range.
+     * Ordered by cost center first so the service can group consecutive
+     * rows by cost center in one pass.
+     */
+    @Query("""
+        SELECT i FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.costCenter cc
+        JOIN i.account a
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND e.entryDate BETWEEN :startDate AND :endDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND cc.code = COALESCE(:costCenterCode, cc.code)
+        ORDER BY cc.code ASC, e.entryDate ASC, e.id ASC
+    """)
+    List<JournalEntryItem> findItemsForCostCenterAuxiliary(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("costCenterCode") String costCenterCode
+    );
+
     // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════

@@ -3,6 +3,7 @@ package com.erp.erp_cloud.controller;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.reports.financial.*;
 import com.erp.erp_cloud.service.reports.financial.AuxiliaryLedgerService;
+import com.erp.erp_cloud.service.reports.financial.CostCenterReportService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,6 +24,7 @@ public class ReportController {
     private final JournalEntryService journalEntryService;
     private final FinancialStatementService financialStatementService;
     private final AuxiliaryLedgerService auxiliaryLedgerService;
+    private final CostCenterReportService costCenterReportService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -181,6 +183,49 @@ public class ReportController {
                 "Auxiliary Ledger generated successfully from %s to %s. " +
                         "%d account(s), %d transaction(s).",
                 startDate, endDate, accountCount, transactionCount
+        );
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // COST CENTER BALANCE
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Generates the "Balance por Centro de Costo" report: total debit and
+     * credit movement per cost center within a date range.
+     *
+     * Example URL:
+     * - GET /api/v1/reports/cost-center-balance?startDate=2026-01-01&endDate=2026-12-31
+     */
+    @GetMapping("/cost-center-balance")
+    @Operation(summary = "Generate Cost Center Balance (Auxiliar por Centro de Costo)", description = "Shows opening balance, transactions and closing balance per cost center for a date range, optionally restricted to an account range and/or a single cost center.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Cost center balance generated successfully")
+    public ResponseEntity<ApiResponse<com.erp.erp_cloud.dto.reports.financial.CostCenterBalanceReport>> getCostCenterBalance(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate,
+
+            @RequestParam(required = false, defaultValue = "1")
+            String startCode,
+
+            @RequestParam(required = false, defaultValue = "9999999999")
+            String endCode,
+
+            @RequestParam(required = false)
+            String costCenterCode) {
+
+        com.erp.erp_cloud.dto.reports.financial.CostCenterBalanceReport data =
+                costCenterReportService.getCostCenterBalanceReport(startDate, endDate, startCode, endCode, costCenterCode);
+
+        String message = String.format(
+                "Cost center balance generated successfully from %s to %s. %d cost center(s).",
+                startDate, endDate, data.getCostCenterGroups() != null ? data.getCostCenterGroups().size() : 0
         );
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));

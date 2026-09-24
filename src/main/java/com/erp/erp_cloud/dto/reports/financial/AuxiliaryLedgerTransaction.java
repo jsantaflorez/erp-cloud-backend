@@ -75,6 +75,20 @@ public class AuxiliaryLedgerTransaction {
      */
     private String costCenterCode;
 
+    /**
+     * Account code this line was posted to. Null/unused in the
+     * per-account Auxiliary Ledger (the account is already the group's
+     * own header there) -- populated when a report groups by something
+     * else instead (e.g. "Auxiliar por Centro de Costo"), where a single
+     * group can contain lines from several different accounts.
+     */
+    private String accountCode;
+
+    /**
+     * Account name, same conditions as accountCode above.
+     */
+    private String accountName;
+
     // ═══════════════════════════════════════════════════════════
     // HELPER METHODS
     // ═══════════════════════════════════════════════════════════
