@@ -258,6 +258,170 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("costCenterCode") String costCenterCode
     );
 
+    /**
+     * Opening balance per third party, as of a cutoff date, for the
+     * "Estado de Cuenta por Tercero" report -- same shape as
+     * getCostCenterOpeningBalances (S.I./Nuevo Saldo instead of a plain
+     * period total), grouped by third party instead of cost center.
+     *
+     * IMPORTANT, and DELIBERATELY DIFFERENT from the Cost Center report:
+     * this is NOT nature-aware. A third party's statement of account
+     * behaves like a receivable/payable subledger, not like a resource
+     * flow -- the balance is always "opening balance + debits - credits"
+     * regardless of which account (expense, revenue, tax, cartera...) a
+     * given line actually posted to, the same way the user's reference
+     * system computes it. Confirmed with the user (2026-09-25) after an
+     * initial nature-aware version -- copied from the Cost Center
+     * report's pattern -- produced a running balance the user correctly
+     * flagged as not matching "saldo inicial + debitos - creditos".
+     *
+     * Selects the raw name components instead of a single "name" column
+     * (unlike CostCenter, ThirdParty has no single display name field --
+     * see ThirdParty.getLegalDisplayName()) so the service can rebuild
+     * the exact same display name Java-side, without duplicating that
+     * logic in HQL. All of them have to be in GROUP BY together with
+     * tp.id, since SQL requires every selected non-aggregated column to
+     * be part of the grouping.
+     *
+     * No cost center filter here -- see
+     * getThirdPartyOpeningBalancesForCostCenter for that. Kept as two
+     * separate methods instead of one with an optional
+     * "(:costCenterCode IS NULL OR ...)" guard on a LEFT JOIN, after a
+     * real bug (2026-09-24, Cost Center report) where reusing a
+     * parameter inside an OR guard silently excluded every row when the
+     * filter was left empty -- and with a LEFT JOIN'ed, genuinely
+     * nullable association like costCenter, a single COALESCE isn't
+     * enough either (COALESCE(:param, cc.code) still compares NULL =
+     * NULL as unknown when both the filter and the item's cost center
+     * are absent), so two dedicated queries are the safest fix.
+     */
+    @Query("""
+        SELECT
+            tp.id,
+            tp.documentNumber,
+            tp.businessName,
+            tp.firstName,
+            tp.middleName,
+            tp.lastName,
+            tp.secondLastName,
+            tp.tradeName,
+            COALESCE(SUM(i.debit - i.credit), 0) as openingBalance
+        FROM JournalEntryItem i
+        JOIN i.thirdParty tp
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE je.company.id = :companyId
+          AND je.active = true
+          AND je.entryDate < :startDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND tp.documentNumber = COALESCE(:thirdPartyDocument, tp.documentNumber)
+        GROUP BY tp.id, tp.documentNumber, tp.businessName, tp.firstName, tp.middleName, tp.lastName, tp.secondLastName, tp.tradeName
+        ORDER BY tp.documentNumber ASC
+    """)
+    List<Object[]> getThirdPartyOpeningBalances(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("thirdPartyDocument") String thirdPartyDocument
+    );
+
+    /**
+     * Same as getThirdPartyOpeningBalances (including NOT being
+     * nature-aware -- see that method's Javadoc), additionally
+     * restricted to one specific cost center (inner join -- only called
+     * when a cost center filter is actually set).
+     */
+    @Query("""
+        SELECT
+            tp.id,
+            tp.documentNumber,
+            tp.businessName,
+            tp.firstName,
+            tp.middleName,
+            tp.lastName,
+            tp.secondLastName,
+            tp.tradeName,
+            COALESCE(SUM(i.debit - i.credit), 0) as openingBalance
+        FROM JournalEntryItem i
+        JOIN i.thirdParty tp
+        JOIN i.account a
+        JOIN i.journalEntry je
+        JOIN i.costCenter cc
+        WHERE je.company.id = :companyId
+          AND je.active = true
+          AND je.entryDate < :startDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND tp.documentNumber = COALESCE(:thirdPartyDocument, tp.documentNumber)
+          AND cc.code = :costCenterCode
+        GROUP BY tp.id, tp.documentNumber, tp.businessName, tp.firstName, tp.middleName, tp.lastName, tp.secondLastName, tp.tradeName
+        ORDER BY tp.documentNumber ASC
+    """)
+    List<Object[]> getThirdPartyOpeningBalancesForCostCenter(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("thirdPartyDocument") String thirdPartyDocument,
+            @Param("costCenterCode") String costCenterCode
+    );
+
+    /**
+     * Transaction items within a date range for the "Estado de Cuenta
+     * por Tercero" report, restricted to items that have a third party
+     * assigned (inner join), optionally narrowed to one third party
+     * and/or an account range. No cost center filter -- see
+     * findItemsForThirdPartyAuxiliaryByCostCenter for that.
+     */
+    @Query("""
+        SELECT i FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.thirdParty tp
+        JOIN i.account a
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND e.entryDate BETWEEN :startDate AND :endDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND tp.documentNumber = COALESCE(:thirdPartyDocument, tp.documentNumber)
+        ORDER BY tp.documentNumber ASC, e.entryDate ASC, e.id ASC
+    """)
+    List<JournalEntryItem> findItemsForThirdPartyAuxiliary(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("thirdPartyDocument") String thirdPartyDocument
+    );
+
+    /**
+     * Same as findItemsForThirdPartyAuxiliary, additionally restricted
+     * to one specific cost center (inner join).
+     */
+    @Query("""
+        SELECT i FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.thirdParty tp
+        JOIN i.account a
+        JOIN i.costCenter cc
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND e.entryDate BETWEEN :startDate AND :endDate
+          AND a.code BETWEEN :startCode AND :endCode
+          AND tp.documentNumber = COALESCE(:thirdPartyDocument, tp.documentNumber)
+          AND cc.code = :costCenterCode
+        ORDER BY tp.documentNumber ASC, e.entryDate ASC, e.id ASC
+    """)
+    List<JournalEntryItem> findItemsForThirdPartyAuxiliaryByCostCenter(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startCode") String startCode,
+            @Param("endCode") String endCode,
+            @Param("thirdPartyDocument") String thirdPartyDocument,
+            @Param("costCenterCode") String costCenterCode
+    );
+
     // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════

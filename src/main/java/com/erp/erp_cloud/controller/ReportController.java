@@ -4,6 +4,7 @@ import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.reports.financial.*;
 import com.erp.erp_cloud.service.reports.financial.AuxiliaryLedgerService;
 import com.erp.erp_cloud.service.reports.financial.CostCenterReportService;
+import com.erp.erp_cloud.service.reports.financial.ThirdPartyReportService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +26,7 @@ public class ReportController {
     private final FinancialStatementService financialStatementService;
     private final AuxiliaryLedgerService auxiliaryLedgerService;
     private final CostCenterReportService costCenterReportService;
+    private final ThirdPartyReportService thirdPartyReportService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -226,6 +228,54 @@ public class ReportController {
         String message = String.format(
                 "Cost center balance generated successfully from %s to %s. %d cost center(s).",
                 startDate, endDate, data.getCostCenterGroups() != null ? data.getCostCenterGroups().size() : 0
+        );
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // THIRD PARTY BALANCE
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Generates the "Estado de Cuenta por Tercero" report: opening
+     * balance, transactions and closing balance per third party within a
+     * date range.
+     *
+     * Example URL:
+     * - GET /api/v1/reports/third-party-balance?startDate=2026-01-01&endDate=2026-12-31
+     */
+    @GetMapping("/third-party-balance")
+    @Operation(summary = "Generate Third Party Balance (Estado de Cuenta por Tercero)", description = "Shows opening balance, transactions and closing balance per third party for a date range, optionally restricted to an account range, a single third party and/or a single cost center.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Third party balance generated successfully")
+    public ResponseEntity<ApiResponse<com.erp.erp_cloud.dto.reports.financial.ThirdPartyBalanceReport>> getThirdPartyBalance(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate,
+
+            @RequestParam(required = false, defaultValue = "1")
+            String startCode,
+
+            @RequestParam(required = false, defaultValue = "9999999999")
+            String endCode,
+
+            @RequestParam(required = false)
+            String thirdPartyDocument,
+
+            @RequestParam(required = false)
+            String costCenterCode) {
+
+        com.erp.erp_cloud.dto.reports.financial.ThirdPartyBalanceReport data =
+                thirdPartyReportService.getThirdPartyBalanceReport(startDate, endDate, startCode, endCode, thirdPartyDocument, costCenterCode);
+
+        String message = String.format(
+                "Third party balance generated successfully from %s to %s. %d third part%s.",
+                startDate, endDate, data.getThirdPartyGroups() != null ? data.getThirdPartyGroups().size() : 0,
+                (data.getThirdPartyGroups() != null && data.getThirdPartyGroups().size() == 1) ? "y" : "ies"
         );
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
