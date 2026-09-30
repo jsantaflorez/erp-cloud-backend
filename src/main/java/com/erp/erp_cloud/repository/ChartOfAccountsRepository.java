@@ -43,6 +43,15 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     // Active accounts filtered by level with pagination (Updated to use Long companyId)
     Page<ChartOfAccounts> findByCompanyIdAndLevelAndActiveTrue(Long companyId, Byte level, Pageable pageable);
 
+    // NEW (2026-09-29): full active chart, every level (not just posting
+    // accounts), for the hierarchical "Balance de Prueba" in
+    // JournalEntryService.getTrialBalanceDetailed() -- that report needs
+    // header/non-posting accounts too, to roll their leaf descendants'
+    // balances up into a subtotal per level, which no existing query
+    // here returns (they all filter to postingAccount = true, since
+    // only posting accounts ever receive journal entry items directly).
+    List<ChartOfAccounts> findByCompanyIdAndActiveTrueOrderByCodeAsc(Long companyId);
+
     // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════

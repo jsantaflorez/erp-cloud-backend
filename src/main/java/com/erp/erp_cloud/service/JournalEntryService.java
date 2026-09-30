@@ -524,6 +524,31 @@ public class JournalEntryService extends TenantAwareService {
                 .build();
     }
 
+    /**
+     * "Balance de Prueba" / detailed Trial Balance, for a date range.
+     *
+     * NEW (2026-09-29): rebuilt to show the FULL chart of accounts
+     * hierarchy (class, group, subgroup, account -- every level, not
+     * just the leaf/posting accounts that actually received postings),
+     * each with its own opening balance + period movement + closing
+     * balance, matching the user's legacy "Balance de Prueba" report
+     * exactly (requested 2026-09-28, confirmed 2026-09-29 after
+     * comparing this report specifically -- not the plain Trial Balance
+     * -- against a screenshot of that legacy screen). A header
+     * account's totals are a pure rollup of its descendants: the
+     * business rule enforced in ChartOfAccountService (a parent with
+     * children can never itself be a posting account) means only leaves
+     * ever carry a direct opening balance or period activity, so
+     * walking up from each leaf and adding into every ancestor, once,
+     * is enough -- no risk of double-counting a header's own postings,
+     * because headers never have any.
+     *
+     * The grand total and per-class summary still only ever count each
+     * LEAF once (see the `postingAccount` guard below) -- summing every
+     * line in the now-hierarchical `lines` list would double-count
+     * everything, since a header line's own numbers already are the sum
+     * of its descendants.
+     */
     public TrialBalanceReportDetailed getTrialBalanceDetailed(LocalDate startDate, LocalDate endDate) {
         // CORREGIDO: Usamos el método unificado del Tenant en lugar de getCompanyId()
         Long companyId = currentTenantId();
@@ -546,7 +571,55 @@ public class JournalEntryService extends TenantAwareService {
             openingBalances.put(code, balance.setScale(2, RoundingMode.HALF_UP));
         }
 
+        // Indexed by code instead of iterated directly (as this used to
+        // do) -- the rollup below needs random access to a leaf's own
+        // activity while walking up its ancestor chain.
+        Map<String, BigDecimal[]> periodActivityByCode = new HashMap<>();
         List<Object[]> activities = accountRepository.getPeriodActivity(companyId, startDate, endDate);
+        for (Object[] row : activities) {
+            String code = (String) row[0];
+            BigDecimal periodDebit = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+            BigDecimal periodCredit = row[5] != null ? (BigDecimal) row[5] : BigDecimal.ZERO;
+            periodActivityByCode.put(code, new BigDecimal[]{
+                    periodDebit.setScale(2, RoundingMode.HALF_UP),
+                    periodCredit.setScale(2, RoundingMode.HALF_UP)
+            });
+        }
+
+        // Full active chart (not just posting accounts) -- header
+        // accounts never appear in the two queries above (they only
+        // ever query JournalEntryItem, which only posting accounts
+        // receive), but they still need a row here, with a rolled-up
+        // subtotal. Already ordered by code, which -- since every PUC
+        // code is a literal string prefix of its children's codes -- is
+        // already a valid pre-order tree traversal, so `lines` below
+        // comes out correctly nested with no extra sorting.
+        List<ChartOfAccounts> allAccounts = accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(companyId);
+
+        Map<String, BigDecimal[]> rolledUp = new HashMap<>();
+        for (ChartOfAccounts account : allAccounts) {
+            rolledUp.put(account.getCode(), new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO});
+        }
+        for (ChartOfAccounts account : allAccounts) {
+            if (!account.isPostingAccount()) {
+                continue; // only leaves ever have direct activity to roll up
+            }
+
+            BigDecimal opening = account.isClosesAtYearEnd()
+                    ? BigDecimal.ZERO
+                    : openingBalances.getOrDefault(account.getCode(), BigDecimal.ZERO);
+            BigDecimal[] activity = periodActivityByCode.getOrDefault(
+                    account.getCode(), new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+
+            ChartOfAccounts current = account;
+            while (current != null) {
+                BigDecimal[] totals = rolledUp.get(current.getCode());
+                totals[0] = totals[0].add(opening);
+                totals[1] = totals[1].add(activity[0]);
+                totals[2] = totals[2].add(activity[1]);
+                current = current.getParent();
+            }
+        }
 
         List<TrialBalanceLineDetailed> lines = new ArrayList<>();
         BigDecimal totalOpeningBalance = BigDecimal.ZERO;
@@ -557,47 +630,56 @@ public class JournalEntryService extends TenantAwareService {
 
         Map<String, BigDecimal> summaryByClass = new HashMap<>();
 
-        for (Object[] row : activities) {
-            String code = (String) row[0];
-            String name = (String) row[1];
-            AccountClass accountClass = (AccountClass) row[2];
-            boolean closesAtYearEnd = (boolean) row[3];
-            BigDecimal periodDebit = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
-            BigDecimal periodCredit = row[5] != null ? (BigDecimal) row[5] : BigDecimal.ZERO;
-
-            periodDebit = periodDebit.setScale(2, RoundingMode.HALF_UP);
-            periodCredit = periodCredit.setScale(2, RoundingMode.HALF_UP);
-
-            BigDecimal opening = closesAtYearEnd
-                    ? BigDecimal.ZERO
-                    : openingBalances.getOrDefault(code, BigDecimal.ZERO);
-
+        for (ChartOfAccounts account : allAccounts) {
+            BigDecimal[] totals = rolledUp.get(account.getCode());
+            BigDecimal opening = totals[0].setScale(2, RoundingMode.HALF_UP);
+            BigDecimal periodDebit = totals[1].setScale(2, RoundingMode.HALF_UP);
+            BigDecimal periodCredit = totals[2].setScale(2, RoundingMode.HALF_UP);
             BigDecimal netMovement = periodDebit.subtract(periodCredit);
             BigDecimal closing = opening.add(netMovement);
 
-            String classDisplay = getAccountClassDisplay(accountClass);
+            // Same "hide if there's genuinely nothing to show" rule
+            // already used by the Cost Center and Third Party reports --
+            // otherwise an unused branch of a freshly-seeded PUC template
+            // would flood this report with hundreds of all-zero rows. A
+            // header's totals are a pure rollup (see above), so if every
+            // descendant is zero, the header is zero too and gets
+            // skipped right along with them.
+            boolean allZero = opening.compareTo(BigDecimal.ZERO) == 0
+                    && periodDebit.compareTo(BigDecimal.ZERO) == 0
+                    && periodCredit.compareTo(BigDecimal.ZERO) == 0
+                    && closing.compareTo(BigDecimal.ZERO) == 0;
+            if (allZero) {
+                continue;
+            }
 
-            TrialBalanceLineDetailed line = TrialBalanceLineDetailed.builder()
-                    .accountCode(code)
-                    .accountName(name)
+            String classDisplay = getAccountClassDisplay(account.getAccountClass());
+
+            lines.add(TrialBalanceLineDetailed.builder()
+                    .accountCode(account.getCode())
+                    .accountName(account.getName())
                     .accountClass(classDisplay)
-                    .balanceSheetAccount(!closesAtYearEnd)
+                    .balanceSheetAccount(!account.isClosesAtYearEnd())
+                    .level(account.getLevel() != null ? account.getLevel().intValue() : 1)
+                    .postingAccount(account.isPostingAccount())
                     .openingBalance(opening)
                     .periodDebit(periodDebit)
                     .periodCredit(periodCredit)
                     .netMovement(netMovement)
                     .closingBalance(closing)
-                    .build();
+                    .build());
 
-            lines.add(line);
-
-            totalOpeningBalance = totalOpeningBalance.add(opening);
-            totalPeriodDebit = totalPeriodDebit.add(periodDebit);
-            totalPeriodCredit = totalPeriodCredit.add(periodCredit);
-            totalNetMovement = totalNetMovement.add(netMovement);
-            totalClosingBalance = totalClosingBalance.add(closing);
-
-            summaryByClass.merge(classDisplay, closing, BigDecimal::add);
+            // Grand total and per-class summary count each LEAF only --
+            // see the method Javadoc for why counting header rows too
+            // would double-count everything.
+            if (account.isPostingAccount()) {
+                totalOpeningBalance = totalOpeningBalance.add(opening);
+                totalPeriodDebit = totalPeriodDebit.add(periodDebit);
+                totalPeriodCredit = totalPeriodCredit.add(periodCredit);
+                totalNetMovement = totalNetMovement.add(netMovement);
+                totalClosingBalance = totalClosingBalance.add(closing);
+                summaryByClass.merge(classDisplay, closing, BigDecimal::add);
+            }
         }
 
         boolean isBalanced = totalPeriodDebit.setScale(2, RoundingMode.HALF_UP)

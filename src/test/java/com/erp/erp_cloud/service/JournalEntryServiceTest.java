@@ -3,6 +3,7 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.JournalEntryRequest;
 import com.erp.erp_cloud.dto.JournalEntryResponseDTO;
 import com.erp.erp_cloud.entity.*;
+import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
@@ -126,6 +127,27 @@ class JournalEntryServiceTest {
         a.setPostingAccount(true);
         a.setRequiresThirdParty(false);
         a.setRequiresCostCenter(false);
+        return a;
+    }
+
+    // Builds a ChartOfAccounts fixture for the hierarchical
+    // getTrialBalanceDetailed() tests below -- unlike plainAccount()
+    // above (used for journal-entry-posting tests, where only the leaf
+    // account itself matters), these need accountClass (switched on by
+    // getAccountClassDisplay(), NPEs on null), level and parent wired up
+    // to actually exercise the rollup.
+    private ChartOfAccounts hierarchyAccount(String code, String name, int level, ChartOfAccounts parent,
+                                              AccountClass accountClass, boolean postingAccount) {
+        ChartOfAccounts a = new ChartOfAccounts();
+        a.setCode(code);
+        a.setName(name);
+        a.setCompany(testCompany);
+        a.setActive(true);
+        a.setLevel((byte) level);
+        a.setParent(parent);
+        a.setAccountClass(accountClass);
+        a.setPostingAccount(postingAccount);
+        a.setClosesAtYearEnd(false);
         return a;
     }
 
@@ -775,11 +797,136 @@ class JournalEntryServiceTest {
                 .thenReturn(new ArrayList<>());
         when(accountRepository.getPeriodActivity(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(new ArrayList<>());
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID))
+                .thenReturn(new ArrayList<>());
 
         var report = service.getTrialBalanceDetailed(start, end);
 
         assertThat(report.getCompanyName()).isEqualTo("ERP Demo Company S.A.S.");
         assertThat(report.getGeneratedAt()).isNotNull();
+    }
+
+    // ============================================================
+    // getTrialBalanceDetailed() -- hierarchical "Balance de Prueba"
+    // (2026-09-29): rebuilt to show every level of the chart of
+    // accounts, not just leaf/posting accounts, each with its own
+    // opening/period/closing rollup. These pin the rollup and
+    // double-counting-avoidance logic, since the repository queries
+    // themselves are mocked and can't exercise the real HQL.
+    // ============================================================
+
+    @Test
+    @DisplayName("getTrialBalanceDetailed() rolls up header accounts' totals from their leaf descendants, without double-counting the grand total")
+    void getTrialBalanceDetailed_rollsUpHeaderTotalsFromLeafDescendants() {
+        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate end = LocalDate.now();
+
+        // 11 (class header) -> 1105 (group header) -> 110501 / 110502 (two leaves)
+        ChartOfAccounts classHeader = hierarchyAccount("11", "Disponible", 1, null, AccountClass.ASSET, false);
+        ChartOfAccounts groupHeader = hierarchyAccount("1105", "Caja", 2, classHeader, AccountClass.ASSET, false);
+        ChartOfAccounts leaf1 = hierarchyAccount("110501", "Caja General", 3, groupHeader, AccountClass.ASSET, true);
+        ChartOfAccounts leaf2 = hierarchyAccount("110502", "Caja Menor", 3, groupHeader, AccountClass.ASSET, true);
+
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID))
+                .thenReturn(List.of(classHeader, groupHeader, leaf1, leaf2));
+        when(accountRepository.getOpeningBalances(eq(COMPANY_ID), any(LocalDate.class)))
+                .thenReturn(List.of(
+                        new Object[]{"110501", new BigDecimal("1000.00")},
+                        new Object[]{"110502", new BigDecimal("500.00")}
+                ));
+        when(accountRepository.getPeriodActivity(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(
+                        new Object[]{"110501", "Caja General", AccountClass.ASSET, false,
+                                new BigDecimal("200.00"), new BigDecimal("50.00")},
+                        new Object[]{"110502", "Caja Menor", AccountClass.ASSET, false,
+                                new BigDecimal("0.00"), new BigDecimal("100.00")}
+                ));
+
+        var report = service.getTrialBalanceDetailed(start, end);
+
+        // Both header levels show the SUM of the two leaves, not just
+        // their own (nonexistent) direct postings.
+        var byCode = report.getLines().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        com.erp.erp_cloud.dto.reports.financial.TrialBalanceLineDetailed::getAccountCode,
+                        line -> line));
+        assertThat(byCode).containsKeys("11", "1105", "110501", "110502");
+
+        assertThat(byCode.get("11").getOpeningBalance()).isEqualByComparingTo("1500.00");
+        assertThat(byCode.get("11").getPeriodDebit()).isEqualByComparingTo("200.00");
+        assertThat(byCode.get("11").getPeriodCredit()).isEqualByComparingTo("150.00");
+        assertThat(byCode.get("11").getClosingBalance()).isEqualByComparingTo("1550.00");
+        assertThat(byCode.get("11").isPostingAccount()).isFalse();
+        assertThat(byCode.get("11").getLevel()).isEqualTo(1);
+
+        assertThat(byCode.get("1105").getClosingBalance()).isEqualByComparingTo("1550.00");
+        assertThat(byCode.get("1105").isPostingAccount()).isFalse();
+
+        assertThat(byCode.get("110501").getClosingBalance()).isEqualByComparingTo("1150.00");
+        assertThat(byCode.get("110501").isPostingAccount()).isTrue();
+        assertThat(byCode.get("110502").getClosingBalance()).isEqualByComparingTo("400.00");
+
+        // Grand total counts each LEAF once -- NOT tripled by also
+        // summing the two header rows that carry the same numbers.
+        assertThat(report.getTotalOpeningBalance()).isEqualByComparingTo("1500.00");
+        assertThat(report.getTotalPeriodDebit()).isEqualByComparingTo("200.00");
+        assertThat(report.getTotalPeriodCredit()).isEqualByComparingTo("150.00");
+        assertThat(report.getTotalClosingBalance()).isEqualByComparingTo("1550.00");
+    }
+
+    @Test
+    @DisplayName("getTrialBalanceDetailed() omits accounts (header or leaf) whose opening balance, period activity and closing balance are all zero")
+    void getTrialBalanceDetailed_skipsAccountsWithNothingToShow() {
+        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate end = LocalDate.now();
+
+        ChartOfAccounts unusedHeader = hierarchyAccount("13", "Deudores", 1, null, AccountClass.ASSET, false);
+        ChartOfAccounts unusedLeaf = hierarchyAccount("130501", "Clientes Nacionales", 2, unusedHeader, AccountClass.ASSET, true);
+
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID))
+                .thenReturn(List.of(unusedHeader, unusedLeaf));
+        when(accountRepository.getOpeningBalances(eq(COMPANY_ID), any(LocalDate.class)))
+                .thenReturn(new ArrayList<>());
+        when(accountRepository.getPeriodActivity(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(new ArrayList<>());
+
+        var report = service.getTrialBalanceDetailed(start, end);
+
+        assertThat(report.getLines()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("getTrialBalanceDetailed() still shows a leaf account with an opening balance but zero period activity")
+    void getTrialBalanceDetailed_leafWithOpeningBalanceButNoPeriodActivityStillAppears() {
+        // FIX (2026-09-29): getPeriodActivity() inner-joins to
+        // JournalEntryItem, so an account with a carried-forward opening
+        // balance but no postings in THIS period never showed up in the
+        // old "iterate activities directly" version -- even though it
+        // has a real, nonzero closing balance. Now the full active
+        // chart drives the loop, so this case is no longer silently
+        // dropped.
+        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate end = LocalDate.now();
+
+        ChartOfAccounts leaf = hierarchyAccount("110501", "Caja General", 1, null, AccountClass.ASSET, true);
+
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID))
+                .thenReturn(List.of(leaf));
+        when(accountRepository.getOpeningBalances(eq(COMPANY_ID), any(LocalDate.class)))
+                // Single-element List.of(new Object[]{...}) is the classic Java
+                // varargs ambiguity bug (infers List<Object> from the array's
+                // own elements instead of a 1-element List<Object[]>) -- type
+                // witness avoids it, same fix already applied elsewhere in
+                // this codebase's tests.
+                .thenReturn(List.<Object[]>of(new Object[]{"110501", new BigDecimal("750.00")}));
+        when(accountRepository.getPeriodActivity(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(new ArrayList<>());
+
+        var report = service.getTrialBalanceDetailed(start, end);
+
+        assertThat(report.getLines()).hasSize(1);
+        assertThat(report.getLines().get(0).getOpeningBalance()).isEqualByComparingTo("750.00");
+        assertThat(report.getLines().get(0).getClosingBalance()).isEqualByComparingTo("750.00");
     }
 
     // ============================================================

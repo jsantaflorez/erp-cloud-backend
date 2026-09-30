@@ -46,6 +46,25 @@ public class TrialBalanceLineDetailed {
     private boolean balanceSheetAccount;
 
     /**
+     * NEW (2026-09-29): hierarchy depth (1 = class-level account like
+     * "11", 2 = group like "11-05", etc. -- same numbering as
+     * ChartOfAccounts.level), so the frontend can indent this line and
+     * tell a header row from a leaf one at a glance, matching the
+     * user's legacy "Balance de Prueba" layout.
+     */
+    private Integer level;
+
+    /**
+     * NEW (2026-09-29): true for a leaf/posting account (its own direct
+     * opening balance and period activity), false for a header/grouping
+     * account (its totals below are a pure rollup of its descendants --
+     * see JournalEntryService.getTrialBalanceDetailed()). Lets the
+     * frontend render header rows distinctly (bold, as a subtotal) from
+     * detail rows.
+     */
+    private boolean postingAccount;
+
+    /**
      * Opening balance at the start of the period.
      *
      * Balance Sheet accounts (1,2,3): Carries balance from prior period
