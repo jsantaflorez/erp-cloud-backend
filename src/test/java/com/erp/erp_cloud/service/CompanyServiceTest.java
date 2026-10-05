@@ -3,6 +3,8 @@ package com.erp.erp_cloud.service;
 import com.erp.erp_cloud.dto.CompanyResponseDTO;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.enums.ChartTemplateType;
+import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * Plain unit tests for CompanyService -- no Spring context, no database.
@@ -25,7 +28,11 @@ class CompanyServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new CompanyService();
+        // getCurrentCompany() (the only method these tests exercise) never
+        // touches either repository -- they only matter for
+        // updateClosingDefaults(), added 2026-10-03 -- so plain mocks with
+        // no stubbing are enough to satisfy the constructor here.
+        service = new CompanyService(mock(CompanyRepository.class), mock(ChartOfAccountsRepository.class));
     }
 
     @AfterEach

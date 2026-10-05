@@ -52,6 +52,15 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     // only posting accounts ever receive journal entry items directly).
     List<ChartOfAccounts> findByCompanyIdAndActiveTrueOrderByCodeAsc(Long companyId);
 
+    // NEW (2026-10-03): populates the Ganancia/Pérdida account dropdowns on
+    // the year-end closing screen. Scoped to EQUITY (class 3) AND
+    // postingAccount = true -- explicit user requirement (2026-10-03): the
+    // closing entry's balancing line must land on an auxiliary/movement
+    // account, never a header, same restriction already enforced
+    // everywhere else a posting target is picked.
+    List<ChartOfAccounts> findByCompanyIdAndAccountClassAndPostingAccountTrueAndActiveTrueOrderByCodeAsc(
+            Long companyId, AccountClass accountClass);
+
     // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════

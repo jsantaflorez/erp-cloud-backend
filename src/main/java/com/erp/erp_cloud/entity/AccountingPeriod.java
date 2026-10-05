@@ -108,6 +108,29 @@ public class AccountingPeriod {
     @Column(name = "reopening_notes", length = 500)
     private String reopeningNotes;
 
+    // --- YEAR-END CLOSING (2026-10-03) ---
+    // Only ever populated on the month=12 record of a year, the same
+    // record that already carries isYearClose. gainAccount/lossAccount
+    // are the ACTUAL accounts confirmed by the user for THIS year's
+    // closing (see Company.defaultGainAccount/defaultLossAccount for the
+    // suggested default, which is a separate, intentionally looser
+    // setting). closingEntry points at the system-generated "CIERRE"
+    // JournalEntry; on a recalculation (reopen, fix, close again) the
+    // previous one is annulled -- never deleted -- and this reference is
+    // swapped to the new one.
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "gain_account_id")
+    private ChartOfAccounts gainAccount;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "loss_account_id")
+    private ChartOfAccounts lossAccount;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "closing_entry_id")
+    private JournalEntry closingEntry;
+
     // --- BUSINESS METHODS ---
 
     /**

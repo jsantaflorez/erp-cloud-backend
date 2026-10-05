@@ -423,6 +423,54 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     );
 
     // ═══════════════════════════════════════════════════════════
+    // YEAR-END CLOSING (2026-10-03)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Full ledger balance per account x third party x cost center, as of a
+     * cutoff date (inclusive), filtered by ChartOfAccounts.closesAtYearEnd
+     * -- true selects Income Statement accounts (classes 4/5/6, the ones
+     * a year-end close must zero out), false selects Balance Sheet
+     * accounts (1/2/3, the ones that carry a real balance forward into
+     * the opening-balance snapshot of the next year). Same shape either
+     * way; AccountingPeriodService.closeYear calls this twice, once per
+     * case, and does something different with the numbers each time.
+     *
+     * No separate "annulled" filter needed: JournalEntryService.annul()
+     * zeroes out an annulled entry's own item amounts in place (see its
+     * Javadoc), so a plain SUM here already nets an annulled entry to
+     * zero on its own -- the e.active = true filter (same convention as
+     * every other query in this repository) is enough.
+     *
+     * Each row's third party / cost center (index 1 / 2) may come back
+     * null when that line didn't carry one -- callers must group
+     * accordingly rather than assume every row has both.
+     */
+    @Query("""
+        SELECT
+            a.id,
+            tp.id,
+            cc.id,
+            COALESCE(SUM(i.debit), 0),
+            COALESCE(SUM(i.credit), 0)
+        FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.account a
+        LEFT JOIN i.thirdParty tp
+        LEFT JOIN i.costCenter cc
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND a.closesAtYearEnd = :closesAtYearEnd
+          AND e.entryDate <= :cutoffDate
+        GROUP BY a.id, tp.id, cc.id
+    """)
+    List<Object[]> getYearEndBalancesByAccount(
+            @Param("companyId") Long companyId,
+            @Param("cutoffDate") LocalDate cutoffDate,
+            @Param("closesAtYearEnd") boolean closesAtYearEnd
+    );
+
+    // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════
 

@@ -25,6 +25,10 @@ public class DocumentTypeService extends TenantAwareService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentTypeService.class);
 
+    // NEW (2026-10-03): fixed code for the auto-created year-end closing
+    // document type (Cierre de Año). See findOrCreateClosingDocumentType.
+    private static final String CLOSING_DOC_TYPE_CODE = "CIERRE";
+
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
     private final CompanyRepository companyRepository;
@@ -179,6 +183,35 @@ public class DocumentTypeService extends TenantAwareService {
         repository.save(existing);
 
         log.info("Consecutive reset successfully for document type {}", id);
+    }
+
+    // =====================================================
+    // YEAR-END CLOSING (2026-10-03)
+    // =====================================================
+
+    /**
+     * Finds the company's "CIERRE" (year-end closing) DocumentType,
+     * creating it on first use. The user explicitly chose auto-creation
+     * (2026-10-03) over forcing every company to remember to set this up
+     * by hand in Tipos de Documento -- AccountingPeriodService calls this
+     * every time a year is closed, so the type exists before the very
+     * first closing entry is ever posted.
+     */
+    @Transactional
+    public DocumentType findOrCreateClosingDocumentType(Long companyId) {
+        return repository.findByCompanyIdAndCode(companyId, CLOSING_DOC_TYPE_CODE)
+                .orElseGet(() -> {
+                    DocumentType entity = new DocumentType();
+                    entity.setCompany(companyRepository.getReferenceById(companyId));
+                    entity.setCode(CLOSING_DOC_TYPE_CODE);
+                    entity.setName("Cierre de Año Fiscal");
+                    entity.setPrefix("CIERRE");
+                    entity.setCurrentConsecutive(0L);
+                    entity.setActive(true);
+                    entity.setAccounting(true);
+                    log.info("Auto-creating 'CIERRE' document type for company ID: {}", companyId);
+                    return repository.save(entity);
+                });
     }
 
     // =====================================================

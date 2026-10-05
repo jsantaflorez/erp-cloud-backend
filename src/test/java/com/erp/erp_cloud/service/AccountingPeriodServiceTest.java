@@ -2,10 +2,18 @@ package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.AccountingPeriodResponseDTO;
 import com.erp.erp_cloud.entity.AccountingPeriod;
+import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.entity.DocumentType;
+import com.erp.erp_cloud.entity.JournalEntry;
+import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
+import com.erp.erp_cloud.repository.AccountOpeningBalanceRepository;
 import com.erp.erp_cloud.repository.AccountingPeriodRepository;
+import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
+import com.erp.erp_cloud.repository.CompanyRepository;
+import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterEach;
@@ -16,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +32,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,15 +42,23 @@ import static org.mockito.Mockito.when;
  * database. This service has no manual QA checklist section (it postdates
  * checklist-pruebas-erp.md), so coverage here is derived straight from the
  * business logic in the service: period open/close, the year-end blanket
- * lock, and reopening.
+ * lock, reopening, and (2026-10-03) the year-end closing entry + opening
+ * balance snapshot generation.
  *
  * Runs via `./gradlew test` (no live MySQL needed).
  */
 class AccountingPeriodServiceTest {
 
     private static final Long COMPANY_ID = 1L;
+    private static final Long GAIN_ACCOUNT_ID = 3605L;
+    private static final Long LOSS_ACCOUNT_ID = 3601L;
 
     @Mock private AccountingPeriodRepository repository;
+    @Mock private ChartOfAccountsRepository accountRepository;
+    @Mock private JournalEntryRepository journalEntryRepository;
+    @Mock private AccountOpeningBalanceRepository openingBalanceRepository;
+    @Mock private CompanyRepository companyRepository;
+    @Mock private DocumentTypeService documentTypeService;
     @Mock private EntityManager entityManager;
 
     private AccountingPeriodService service;
@@ -50,17 +69,22 @@ class AccountingPeriodServiceTest {
         MockitoAnnotations.openMocks(this);
         TenantContext.setCurrentTenant(COMPANY_ID);
 
-        service = new AccountingPeriodService(repository, entityManager);
+        service = new AccountingPeriodService(
+                repository, accountRepository, journalEntryRepository, openingBalanceRepository,
+                companyRepository, documentTypeService, entityManager);
 
         testCompany = new Company();
         testCompany.setId(COMPANY_ID);
 
-        when(entityManager.getReference(Company.class, COMPANY_ID)).thenReturn(testCompany);
+        when(entityManager.getReference(eq(Company.class), any(Long.class))).thenReturn(testCompany);
         when(repository.save(any(AccountingPeriod.class))).thenAnswer(invocation -> {
             AccountingPeriod p = invocation.getArgument(0);
             if (p.getId() == null) p.setId(100L);
             return p;
         });
+        // closeYear()/reopenYear() default to "no next/prior year on record"
+        // unless a test explicitly stubs otherwise -- Mockito's default
+        // answer for an unstubbed List-returning call is an empty list.
     }
 
     @AfterEach
@@ -78,8 +102,65 @@ class AccountingPeriodServiceTest {
         return p;
     }
 
+    private ChartOfAccounts equityAccount(Long id, String code, boolean requiresThirdParty, boolean requiresCostCenter) {
+        ChartOfAccounts a = new ChartOfAccounts();
+        a.setId(id);
+        a.setCode(code);
+        a.setName("Cuenta " + code);
+        a.setCompany(testCompany);
+        a.setAccountClass(AccountClass.EQUITY);
+        a.setPostingAccount(true);
+        a.setRequiresThirdParty(requiresThirdParty);
+        a.setRequiresCostCenter(requiresCostCenter);
+        a.setClosesAtYearEnd(false);
+        return a;
+    }
+
+    private ChartOfAccounts resultAccount(Long id, String code, boolean requiresThirdParty, boolean requiresCostCenter) {
+        ChartOfAccounts a = new ChartOfAccounts();
+        a.setId(id);
+        a.setCode(code);
+        a.setName("Cuenta " + code);
+        a.setCompany(testCompany);
+        a.setAccountClass(AccountClass.REVENUE);
+        a.setPostingAccount(true);
+        a.setRequiresThirdParty(requiresThirdParty);
+        a.setRequiresCostCenter(requiresCostCenter);
+        a.setClosesAtYearEnd(true);
+        return a;
+    }
+
+    /**
+     * Wires the minimum stubs every closeYear() test needs: valid
+     * Ganancia/Pérdida equity accounts, a closing DocumentType, a
+     * consecutive number, and a no-op save/saveAll for the closing entry
+     * and the opening-balance snapshot. Individual tests still stub
+     * getYearEndBalancesByAccount() themselves, since that's what varies
+     * per scenario.
+     */
+    private void stubClosingInfrastructure() {
+        when(accountRepository.findById(GAIN_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(GAIN_ACCOUNT_ID, "360501", false, false)));
+        when(accountRepository.findById(LOSS_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(LOSS_ACCOUNT_ID, "360101", false, false)));
+
+        DocumentType closingDocType = new DocumentType();
+        closingDocType.setId(99L);
+        closingDocType.setCode("CIERRE");
+        closingDocType.setPrefix("CIERRE");
+        when(documentTypeService.findOrCreateClosingDocumentType(COMPANY_ID)).thenReturn(closingDocType);
+        when(documentTypeService.getNextConsecutive(99L)).thenReturn(1L);
+
+        when(journalEntryRepository.save(any(JournalEntry.class))).thenAnswer(invocation -> {
+            JournalEntry e = invocation.getArgument(0);
+            if (e.getId() == null) e.setId(500L);
+            return e;
+        });
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID)).thenReturn(List.of());
+    }
+
     // ============================================================
-    // closePeriod() / closeYear()
+    // closePeriod()
     // ============================================================
 
     @Test
@@ -155,22 +236,9 @@ class AccountingPeriodServiceTest {
         return periods;
     }
 
-    @Test
-    @DisplayName("closeYear() seals December's period record with the year-close flag, once months 1-11 are closed")
-    void closeYear_setsYearCloseTrue_onDecemberRecord_whenAllOtherMonthsClosed() {
-        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
-        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
-
-        service.closeYear(2026, "jaime", "annual close");
-
-        ArgumentCaptor<AccountingPeriod> captor = ArgumentCaptor.forClass(AccountingPeriod.class);
-        verify(repository).save(captor.capture());
-        AccountingPeriod saved = captor.getValue();
-
-        assertThat(saved.getMonth()).isEqualTo(12);
-        assertThat(saved.isYearClose()).isTrue();
-        assertThat(saved.isOpen()).isFalse();
-    }
+    // ============================================================
+    // closeYear() -- months/prior-year validation (2026-10-03 rewrite)
+    // ============================================================
 
     @Test
     @DisplayName("closeYear() rejects sealing the year while some months are still open or missing a record")
@@ -181,7 +249,7 @@ class AccountingPeriodServiceTest {
         periods.removeIf(p -> p.getMonth() == 8);
         when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(periods);
 
-        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close"))
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
                 .isInstanceOf(InvalidOperationException.class)
                 .satisfies(ex -> {
                     InvalidOperationException ioe = (InvalidOperationException) ex;
@@ -189,8 +257,10 @@ class AccountingPeriodServiceTest {
                     assertThat(ioe.getMessage()).contains("5").contains("8");
                 });
 
-        // Must never reach the actual close/save step.
-        verify(repository, org.mockito.Mockito.never()).save(any(AccountingPeriod.class));
+        // Must never reach the actual close/save step, nor touch the
+        // closing-entry machinery.
+        verify(repository, never()).save(any(AccountingPeriod.class));
+        verify(journalEntryRepository, never()).save(any(JournalEntry.class));
     }
 
     @Test
@@ -198,10 +268,226 @@ class AccountingPeriodServiceTest {
     void closeYear_noPeriodsExistYet_throws() {
         when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close"))
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
                 .isInstanceOf(InvalidOperationException.class)
                 .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
                         .isEqualTo("MONTHS_NOT_CLOSED_BEFORE_YEAR_END"));
+    }
+
+    @Test
+    @DisplayName("closeYear() rejects closing the year when the prior year exists but is not closed")
+    void closeYear_priorYearNotClosed_throws() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        AccountingPeriod priorYearDecember = existingPeriod(2025, 12, false);
+        priorYearDecember.setYearClose(false); // closed individually, but year never sealed
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2025)).thenReturn(List.of(priorYearDecember));
+
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("PRIOR_YEAR_NOT_CLOSED"));
+
+        verify(journalEntryRepository, never()).save(any(JournalEntry.class));
+    }
+
+    @Test
+    @DisplayName("closeYear() proceeds when the prior year does not exist at all (company's first fiscal year)")
+    void closeYear_noPriorYearOnRecord_doesNotBlock() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2025)).thenReturn(List.of());
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.of());
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(false)))
+                .thenReturn(List.of());
+        stubClosingInfrastructure();
+
+        AccountingPeriodResponseDTO result =
+                service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID);
+
+        assertThat(result.isYearClose()).isTrue();
+    }
+
+    // ============================================================
+    // closeYear() -- Ganancia/Pérdida account validation
+    // ============================================================
+
+    @Test
+    @DisplayName("closeYear() rejects when the Ganancia and Pérdida accounts are the same")
+    void closeYear_sameGainAndLossAccount_throws() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(accountRepository.findById(GAIN_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(GAIN_ACCOUNT_ID, "360501", false, false)));
+
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "x", GAIN_ACCOUNT_ID, GAIN_ACCOUNT_ID))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("GAIN_LOSS_ACCOUNTS_MUST_DIFFER"));
+    }
+
+    @Test
+    @DisplayName("closeYear() rejects a Ganancia/Pérdida account that is not a posting account of class Patrimonio")
+    void closeYear_invalidClosingAccountClass_throws() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        ChartOfAccounts assetAccount = new ChartOfAccounts();
+        assetAccount.setId(GAIN_ACCOUNT_ID);
+        assetAccount.setCode("1105");
+        assetAccount.setCompany(testCompany);
+        assetAccount.setAccountClass(AccountClass.ASSET);
+        assetAccount.setPostingAccount(true);
+        when(accountRepository.findById(GAIN_ACCOUNT_ID)).thenReturn(Optional.of(assetAccount));
+
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "x", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("INVALID_CLOSING_ACCOUNT"));
+    }
+
+    @Test
+    @DisplayName("closeYear() rejects a Ganancia/Pérdida account that itself requires Tercero or Centro de Costo")
+    void closeYear_closingAccountRequiresDimension_throws() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(accountRepository.findById(GAIN_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(GAIN_ACCOUNT_ID, "360501", true, false)));
+
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "x", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("CLOSING_ACCOUNT_CANNOT_REQUIRE_DIMENSIONS"));
+    }
+
+    // ============================================================
+    // closeYear() -- third party / cost center data-integrity pre-check
+    // ============================================================
+
+    @Test
+    @DisplayName("closeYear() rejects when a result account requiring Tercero has a movement with no tercero")
+    void closeYear_resultAccountMissingRequiredThirdParty_throws() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(accountRepository.findById(GAIN_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(GAIN_ACCOUNT_ID, "360501", false, false)));
+        when(accountRepository.findById(LOSS_ACCOUNT_ID))
+                .thenReturn(Optional.of(equityAccount(LOSS_ACCOUNT_ID, "360101", false, false)));
+
+        ChartOfAccounts salesAccount = resultAccount(4001L, "413505", true, false);
+        when(accountRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(COMPANY_ID))
+                .thenReturn(List.of(salesAccount));
+
+        // Row with no third party (index 1 = null) for an account that requires one.
+        Object[] row = new Object[]{4001L, null, null, BigDecimal.ZERO, new BigDecimal("500.00")};
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.<Object[]>of(row));
+
+        assertThatThrownBy(() -> service.closeYear(2026, "jaime", "x", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> {
+                    InvalidOperationException ioe = (InvalidOperationException) ex;
+                    assertThat(ioe.getErrorCode()).isEqualTo("RESULT_ACCOUNTS_MISSING_THIRD_PARTY_OR_COST_CENTER");
+                    assertThat(ioe.getMessage()).contains("413505");
+                });
+
+        verify(journalEntryRepository, never()).save(any(JournalEntry.class));
+    }
+
+    // ============================================================
+    // closeYear() -- closing entry generation (happy paths)
+    // ============================================================
+
+    @Test
+    @DisplayName("closeYear() generates a Ganancia closing entry when revenue exceeds expenses, and regenerates next year's opening balances")
+    void closeYear_netGain_generatesClosingEntryCreditingGainAccount() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
+        stubClosingInfrastructure();
+
+        // Revenue 413505: net credit balance of 1000 (debit 0, credit 1000).
+        Object[] revenueRow = new Object[]{4001L, null, null, BigDecimal.ZERO, new BigDecimal("1000.00")};
+        // Expense 513505: net debit balance of 400 (debit 400, credit 0).
+        Object[] expenseRow = new Object[]{5001L, null, null, new BigDecimal("400.00"), BigDecimal.ZERO};
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.of(revenueRow, expenseRow));
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(false)))
+                .thenReturn(List.of());
+        when(entityManager.getReference(eq(ChartOfAccounts.class), any())).thenAnswer(invocation -> {
+            ChartOfAccounts a = new ChartOfAccounts();
+            a.setId(invocation.getArgument(1));
+            return a;
+        });
+
+        AccountingPeriodResponseDTO result =
+                service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID);
+
+        ArgumentCaptor<JournalEntry> entryCaptor = ArgumentCaptor.forClass(JournalEntry.class);
+        verify(journalEntryRepository).save(entryCaptor.capture());
+        JournalEntry entry = entryCaptor.getValue();
+
+        // 2 zeroing lines (revenue + expense) + 1 consolidated result line.
+        assertThat(entry.getItems()).hasSize(3);
+        BigDecimal totalDebit = entry.getItems().stream().map(i -> i.getDebit()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCredit = entry.getItems().stream().map(i -> i.getCredit()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(totalDebit.compareTo(totalCredit)).isEqualTo(0); // always balanced
+
+        boolean hasGainLine = entry.getItems().stream()
+                .anyMatch(i -> i.getAccount().getId().equals(GAIN_ACCOUNT_ID)
+                        && i.getCredit().compareTo(new BigDecimal("600.00")) == 0);
+        assertThat(hasGainLine).isTrue();
+
+        assertThat(result.isYearClose()).isTrue();
+        assertThat(result.getGainAccountId()).isEqualTo(GAIN_ACCOUNT_ID);
+        assertThat(result.getLossAccountId()).isEqualTo(LOSS_ACCOUNT_ID);
+        assertThat(result.getClosingEntryId()).isNotNull();
+
+        verify(openingBalanceRepository).deleteByCompanyIdAndYear(COMPANY_ID, 2027);
+    }
+
+    @Test
+    @DisplayName("closeYear() generates a Pérdida closing entry debiting the loss account when expenses exceed revenue")
+    void closeYear_netLoss_generatesClosingEntryDebitingLossAccount() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
+        stubClosingInfrastructure();
+
+        Object[] revenueRow = new Object[]{4001L, null, null, BigDecimal.ZERO, new BigDecimal("200.00")};
+        Object[] expenseRow = new Object[]{5001L, null, null, new BigDecimal("900.00"), BigDecimal.ZERO};
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.of(revenueRow, expenseRow));
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(false)))
+                .thenReturn(List.of());
+        when(entityManager.getReference(eq(ChartOfAccounts.class), any())).thenAnswer(invocation -> {
+            ChartOfAccounts a = new ChartOfAccounts();
+            a.setId(invocation.getArgument(1));
+            return a;
+        });
+
+        service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID);
+
+        ArgumentCaptor<JournalEntry> entryCaptor = ArgumentCaptor.forClass(JournalEntry.class);
+        verify(journalEntryRepository).save(entryCaptor.capture());
+        JournalEntry entry = entryCaptor.getValue();
+
+        boolean hasLossLine = entry.getItems().stream()
+                .anyMatch(i -> i.getAccount().getId().equals(LOSS_ACCOUNT_ID)
+                        && i.getDebit().compareTo(new BigDecimal("700.00")) == 0);
+        assertThat(hasLossLine).isTrue();
+    }
+
+    @Test
+    @DisplayName("closeYear() posts no closing entry when there is no Income Statement activity at all")
+    void closeYear_noActivity_generatesNoClosingEntry() {
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(allMonthsClosedExceptDecember(2026));
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
+        stubClosingInfrastructure();
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.of());
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(false)))
+                .thenReturn(List.of());
+
+        AccountingPeriodResponseDTO result =
+                service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID);
+
+        verify(journalEntryRepository, never()).save(any(JournalEntry.class));
+        assertThat(result.getClosingEntryId()).isNull();
+        assertThat(result.isYearClose()).isTrue();
     }
 
     // ============================================================
@@ -239,7 +525,7 @@ class AccountingPeriodServiceTest {
     }
 
     @Test
-    @DisplayName("reopenYear() clears the year-close flag only on periods that had it set")
+    @DisplayName("reopenYear() clears the year-close flag only on periods that had it set, when next year does not exist")
     void reopenYear_clearsYearCloseOnlyOnFlaggedPeriods() {
         AccountingPeriod december = existingPeriod(2026, 12, false);
         december.setYearClose(true);
@@ -247,6 +533,7 @@ class AccountingPeriodServiceTest {
         june.setYearClose(false);
 
         when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of(december, june));
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2027)).thenReturn(List.of());
 
         service.reopenYear(2026, "jaime", "unseal for audit adjustment");
 
@@ -258,6 +545,42 @@ class AccountingPeriodServiceTest {
         assertThat(june.getReopenedBy()).isNull();
         // June's individual open/closed state is untouched by a year-level unseal.
         assertThat(june.isOpen()).isFalse();
+    }
+
+    @Test
+    @DisplayName("reopenYear() rejects reopening year N while year N+1 is still closed")
+    void reopenYear_nextYearStillClosed_throws() {
+        AccountingPeriod december2026 = existingPeriod(2026, 12, false);
+        december2026.setYearClose(true);
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of(december2026));
+
+        AccountingPeriod december2027 = existingPeriod(2027, 12, false);
+        december2027.setYearClose(true); // 2027 is still sealed
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2027)).thenReturn(List.of(december2027));
+
+        assertThatThrownBy(() -> service.reopenYear(2026, "jaime", "correction"))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("NEXT_YEAR_MUST_BE_OPEN_BEFORE_REOPEN"));
+
+        // Must never touch 2026's own periods when blocked.
+        verify(repository, never()).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("reopenYear() succeeds when year N+1 exists but is already open")
+    void reopenYear_nextYearOpen_succeeds() {
+        AccountingPeriod december2026 = existingPeriod(2026, 12, false);
+        december2026.setYearClose(true);
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of(december2026));
+
+        AccountingPeriod december2027 = existingPeriod(2027, 12, false);
+        december2027.setYearClose(false); // 2027 already reopened
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2027)).thenReturn(List.of(december2027));
+
+        service.reopenYear(2026, "jaime", "correction");
+
+        assertThat(december2026.isYearClose()).isFalse();
     }
 
     // ============================================================

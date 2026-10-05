@@ -4,6 +4,8 @@ import com.erp.erp_cloud.dto.AccountingPeriodActionRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodResponseDTO;
 import com.erp.erp_cloud.dto.ApiResponse;
+import com.erp.erp_cloud.dto.CloseYearRequest;
+import com.erp.erp_cloud.dto.YearClosingOptionsDTO;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.security.UserPrincipal;
 import com.erp.erp_cloud.service.AccountingPeriodService;
@@ -107,17 +109,34 @@ public class AccountingPeriodController {
     }
 
     /**
-     * Closes a full fiscal year (Annual close).
+     * Gets the options for the year-end closing screen: the eligible
+     * Ganancia/Pérdida accounts (posting accounts of class Patrimonio)
+     * and the company's suggested defaults, if configured.
+     */
+    @GetMapping("/closing-options")
+    @Operation(summary = "Get year-end closing options",
+            description = "Equity accounts eligible as Ganancia/Pérdida destinations, plus the company's suggested defaults.")
+    public ResponseEntity<ApiResponse<YearClosingOptionsDTO>> getYearClosingOptions() {
+        YearClosingOptionsDTO options = service.getYearClosingOptions();
+        return ResponseEntity.ok(new ApiResponse<>("Closing options retrieved", true, options));
+    }
+
+    /**
+     * Closes a full fiscal year (Annual close). REWRITTEN (2026-10-03):
+     * now also generates the real "CIERRE" closing entry and the
+     * next year's opening-balance snapshot -- see
+     * AccountingPeriodService.closeYear for the full algorithm.
      */
     @PostMapping("/{year}/close-year")
     @Operation(summary = "Close fiscal year")
-    public ResponseEntity<ApiResponse<Void>> closeYear(
+    public ResponseEntity<ApiResponse<AccountingPeriodResponseDTO>> closeYear(
             @PathVariable Integer year,
-            @Valid @RequestBody AccountingPeriodActionRequest request) { // Consistent UI
+            @Valid @RequestBody CloseYearRequest request) {
 
         String currentUser = currentUsername();
-        service.closeYear(year, currentUser, request.getNotes());
-        return ResponseEntity.ok(new ApiResponse<>("Fiscal year locked", true, null));
+        AccountingPeriodResponseDTO period = service.closeYear(
+                year, currentUser, request.getNotes(), request.getGainAccountId(), request.getLossAccountId());
+        return ResponseEntity.ok(new ApiResponse<>("Fiscal year closed", true, period));
     }
 
     /**

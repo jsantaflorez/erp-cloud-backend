@@ -25,4 +25,15 @@ public class AccountingPeriodResponseDTO {
     private LocalDateTime reopenedAt;
     private String reopenedBy;
     private String reopeningNotes;
+
+    // NEW (2026-10-03): only populated on the month=12 record of a closed
+    // year. See AccountingPeriod.gainAccount/lossAccount/closingEntry.
+    private Long gainAccountId;
+    private String gainAccountCode;
+    private String gainAccountName;
+    private Long lossAccountId;
+    private String lossAccountCode;
+    private String lossAccountName;
+    private Long closingEntryId;
+    private String closingEntryDocumentNumber;
 }

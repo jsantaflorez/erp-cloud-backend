@@ -21,4 +21,14 @@ public class CompanyResponseDTO {
     private String legalName;
     private String tradeName;
     private String chartTemplate; // null, "COMERCIAL" or "SOLIDARIO"
+
+    // NEW (2026-10-03): suggested Ganancia/Pérdida accounts for the
+    // year-end closing screen. Null means not configured yet -- see
+    // Company.defaultGainAccount/defaultLossAccount.
+    private Long defaultGainAccountId;
+    private String defaultGainAccountCode;
+    private String defaultGainAccountName;
+    private Long defaultLossAccountId;
+    private String defaultLossAccountCode;
+    private String defaultLossAccountName;
 }

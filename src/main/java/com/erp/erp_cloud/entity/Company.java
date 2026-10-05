@@ -110,4 +110,21 @@ public class Company implements Serializable {
     @Enumerated(EnumType.STRING)
     @Column(name = "chart_template", length = 20)
     private ChartTemplateType chartTemplate;
+
+    // NEW (2026-10-03): default Ganancia/Pérdida accounts suggested on the
+    // year-end closing screen (Cierre de Año). Deliberately just a
+    // SUGGESTION, never the account actually used -- the user confirms or
+    // overrides both every time a specific year is closed, and what was
+    // actually used for that year is stored on AccountingPeriod itself, not
+    // here. This keeps a later change to the company default from silently
+    // rewriting how past years were closed. Both nullable: a company with
+    // no defaults configured yet simply shows no suggestion, the user must
+    // pick explicitly.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_gain_account_id")
+    private ChartOfAccounts defaultGainAccount;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_loss_account_id")
+    private ChartOfAccounts defaultLossAccount;
 }
