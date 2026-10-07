@@ -3,3 +3,7 @@
 # rellena los valores reales. Ese archivo esta en .gitignore y nunca se sube.
 DB_PASSWORD=tu_password_de_mysql_aqui
 JWT_SECRET=un_valor_aleatorio_largo_aqui
+
+# Opcional: si el puerto 8080 ya esta ocupado en tu maquina por otra
+# aplicacion, descomenta y ajusta esta linea.
+# server.port=8081
