@@ -120,11 +120,31 @@ public class Company implements Serializable {
     // rewriting how past years were closed. Both nullable: a company with
     // no defaults configured yet simply shows no suggestion, the user must
     // pick explicitly.
-    @ManyToOne(fetch = FetchType.LAZY)
+    // FIX (2026-10-06): LAZY here throws
+    // "org.hibernate.LazyInitializationException: could not initialize
+    // proxy ... - no Session" the first time either field is actually
+    // configured. Root cause is specific to Company, not a general LAZY
+    // problem: TenantResolver.resolve() loads this exact Company entity
+    // inside its OWN short @Transactional(readOnly = true) (one per
+    // request, called once by TenantFilter), and TenantContext then
+    // holds onto that same entity instance for the rest of the request
+    // -- including inside later, separate @Transactional methods (e.g.
+    // CompanyService.getCurrentCompany()). By the time one of those
+    // later methods touches a LAZY association, the Hibernate Session
+    // that originally loaded this Company is already closed, and a
+    // lazy proxy can never be re-initialized by a different, newer
+    // transaction. EAGER sidesteps this entirely: both accounts load as
+    // part of the same single query TenantResolver already runs, so
+    // there is no proxy left to go stale. (AccountingPeriod's own new
+    // gainAccount/lossAccount/closingEntry fields don't need this --
+    // those are always loaded and read inside the one @Transactional
+    // method that uses them, never carried across request-scoped
+    // ThreadLocal state the way Company is.)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "default_gain_account_id")
     private ChartOfAccounts defaultGainAccount;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "default_loss_account_id")
     private ChartOfAccounts defaultLossAccount;
 }

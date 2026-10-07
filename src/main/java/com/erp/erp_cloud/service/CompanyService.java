@@ -71,10 +71,27 @@ public class CompanyService extends TenantAwareService {
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Company", companyId));
 
-        company.setDefaultGainAccount(
-                resolveEquityAccountOrNull(request.getDefaultGainAccountId(), companyId));
-        company.setDefaultLossAccount(
-                resolveEquityAccountOrNull(request.getDefaultLossAccountId(), companyId));
+        ChartOfAccounts gain = resolveEquityAccountOrNull(request.getDefaultGainAccountId(), companyId);
+        ChartOfAccounts loss = resolveEquityAccountOrNull(request.getDefaultLossAccountId(), companyId);
+
+        // NEW (2026-10-06): the two suggestions are only ever useful if
+        // they point at different accounts -- closeYear() already
+        // enforces this for the accounts actually confirmed for a given
+        // year (GAIN_LOSS_ACCOUNTS_MUST_DIFFER), but nothing stopped the
+        // company-level suggestion itself from being saved with the same
+        // account in both fields, which would just get rejected later at
+        // closing time anyway. Same stable error code reused here since
+        // it's the identical rule, just checked one step earlier; a null
+        // in either field (no suggestion configured yet) never triggers
+        // this -- only two concrete, equal account ids do.
+        if (gain != null && loss != null && gain.getId().equals(loss.getId())) {
+            throw new InvalidOperationException(
+                    "Las cuentas de Ganancia y Pérdida deben ser diferentes.",
+                    "GAIN_LOSS_ACCOUNTS_MUST_DIFFER");
+        }
+
+        company.setDefaultGainAccount(gain);
+        company.setDefaultLossAccount(loss);
 
         companyRepository.save(company);
         return getCurrentCompany();
