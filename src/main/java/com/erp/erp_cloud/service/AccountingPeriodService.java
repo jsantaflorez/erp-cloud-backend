@@ -34,7 +34,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -66,9 +68,49 @@ public class AccountingPeriodService extends TenantAwareService {
     @Transactional(readOnly = true)
     public List<AccountingPeriodResponseDTO> findAllByCompany() {
         Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
-        return repository.findByCompanyIdOrderByYearDescMonthDesc(companyId)
-                .stream()
+        List<AccountingPeriod> periods = repository.findByCompanyIdOrderByYearDescMonthDesc(companyId);
+
+        List<AccountingPeriodResponseDTO> result = periods.stream()
                 .map(this::mapToResponseDTO)
+                .collect(Collectors.toCollection(ArrayList::new));
+        result.addAll(scaffoldOpenMonthsWithActivityButNoPeriodRecord(companyId, periods));
+
+        result.sort(Comparator.comparing(AccountingPeriodResponseDTO::getYear)
+                .thenComparing(AccountingPeriodResponseDTO::getMonth)
+                .reversed());
+
+        return result;
+    }
+
+    /**
+     * NEW (2026-10-10): an AccountingPeriod row only ever gets created
+     * when a month is explicitly closed or reopened (see
+     * findOrCreatePeriodEntity) -- a month with real journal-entry
+     * activity that nobody has touched yet has no row at all, so it
+     * used to be invisible on the Periodos Contables screen, as if it
+     * never existed. This scaffolds a read-only "Abierto" DTO (no id,
+     * no audit trail -- it was never closed or reopened) for any such
+     * month, purely for display. Never persisted; purely computed from
+     * JournalEntryRepository.findDistinctEntryDates on every read.
+     */
+    private List<AccountingPeriodResponseDTO> scaffoldOpenMonthsWithActivityButNoPeriodRecord(
+            Long companyId, List<AccountingPeriod> existingPeriods) {
+        Set<String> existingKeys = existingPeriods.stream()
+                .map(p -> p.getYear() + "-" + p.getMonth())
+                .collect(Collectors.toSet());
+
+        return journalEntryRepository.findDistinctEntryDates(companyId, null, null)
+                .stream()
+                .map(YearMonth::from)
+                .distinct()
+                .filter(ym -> !existingKeys.contains(ym.getYear() + "-" + ym.getMonthValue()))
+                .map(ym -> AccountingPeriodResponseDTO.builder()
+                        .year(ym.getYear())
+                        .month(ym.getMonthValue())
+                        .periodCode(String.format("%d-%02d", ym.getYear(), ym.getMonthValue()))
+                        .isOpen(true)
+                        .isYearClose(false)
+                        .build())
                 .collect(Collectors.toList());
     }
 
@@ -269,19 +311,41 @@ public class AccountingPeriodService extends TenantAwareService {
     }
 
     /**
-     * Ensures months 1-11 of the fiscal year are already individually
-     * closed before the year can be sealed. A month with no period record
-     * at all counts as "not closed" here -- stricter than the general
+     * Ensures every month 1-11 of the fiscal year that actually HAS
+     * journal-entry activity is already individually closed before the
+     * year can be sealed.
+     *
+     * REWRITTEN (2026-10-10): this used to treat any month with no
+     * period record at all as "not closed", full stop -- which seemed
+     * right (year-end closing must be an explicit, reviewed step) until
+     * the user tested a company whose books start mid-year (first
+     * fiscal year, or migrated from a legacy system partway through
+     * one): it demanded closing nine or ten months that the company
+     * never operated in, with no entries to review in the first place.
+     * Now a month only needs an explicit close if JournalEntryRepository
+     * .findDistinctEntryDates shows at least one entry in it (active or
+     * annulled); a month with zero entries has nothing to review and is
+     * silently skipped. This is still stricter than the general
      * validateDateIsOpen()/isPeriodClosed() convention elsewhere in this
-     * service, where a missing record defaults to open, because year-end
-     * closing must be an explicit, reviewed step for every month.
+     * service (where a missing record defaults to open) for any month
+     * that DOES have activity -- that one still must be closed
+     * explicitly, never inferred from the data alone.
      */
     private void validateAllMonthsClosedBeforeYearEnd(Long companyId, Integer year) {
         List<AccountingPeriod> periods = repository.findByCompanyIdAndYear(companyId, year);
+        Set<Integer> closedMonths = periods.stream()
+                .filter(p -> !p.isOpen())
+                .map(AccountingPeriod::getMonth)
+                .collect(Collectors.toSet());
+
+        Set<Integer> monthsWithActivity = journalEntryRepository
+                .findDistinctEntryDates(companyId, LocalDate.of(year, 1, 1), LocalDate.of(year, 11, 30))
+                .stream()
+                .map(LocalDate::getMonthValue)
+                .collect(Collectors.toSet());
 
         List<Integer> notClosed = IntStream.rangeClosed(1, 11)
-                .filter(month -> periods.stream()
-                        .noneMatch(p -> p.getMonth().equals(month) && !p.isOpen()))
+                .filter(month -> monthsWithActivity.contains(month) && !closedMonths.contains(month))
                 .boxed()
                 .collect(Collectors.toList());
 
@@ -587,11 +651,29 @@ public class AccountingPeriodService extends TenantAwareService {
                 toSave.size(), nextYear, companyId);
     }
 
+    /**
+     * BUG FIX (2026-10-10): this used to close a period unconditionally,
+     * even one that was already closed -- the user noticed "Cerrar Mes"
+     * let them pick an already-closed month from the dropdown and
+     * resubmit, silently overwriting closedAt/closedBy/closingNotes
+     * with no record of the original close ever happening. Now it
+     * requires the period to actually be open first, same as every
+     * other state change in this service being an explicit, reviewed
+     * step (reopenPeriod/reopenYear/closeYear) rather than an implicit
+     * overwrite. To re-close a corrected month, reopen it first.
+     */
     private AccountingPeriodResponseDTO performClose(Integer year, Integer month, String closedBy, String notes, boolean isYearEnd) {
         Long companyId = TenantContext.getCurrentTenant(); // FIXED: Matches your context method
         validateYearMonth(year, month);
 
         AccountingPeriod period = findOrCreatePeriodEntity(companyId, year, month);
+
+        if (!period.isOpen()) {
+            throw new InvalidOperationException(
+                    "El período " + year + "-" + String.format("%02d", month)
+                            + " ya está cerrado. Reábrelo primero si necesitas corregir la fecha o las notas de cierre.",
+                    "PERIOD_ALREADY_CLOSED");
+        }
 
         period.setOpen(false);
         period.setYearClose(isYearEnd);

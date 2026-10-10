@@ -33,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -160,6 +161,48 @@ class AccountingPeriodServiceTest {
     }
 
     // ============================================================
+    // findAllByCompany() -- virtual "Abierto" rows for months with
+    // activity but no period record yet (2026-10-10)
+    // ============================================================
+
+    @Test
+    @DisplayName("findAllByCompany() scaffolds a virtual Abierto row for a month with activity but no period record")
+    void findAllByCompany_scaffoldsOpenRowForMonthWithActivityButNoRecord() {
+        AccountingPeriod marchClosed = existingPeriod(2026, 3, false);
+        when(repository.findByCompanyIdOrderByYearDescMonthDesc(COMPANY_ID)).thenReturn(List.of(marchClosed));
+        when(journalEntryRepository.findDistinctEntryDates(eq(COMPANY_ID), isNull(), isNull()))
+                .thenReturn(List.of(LocalDate.of(2026, 3, 10), LocalDate.of(2026, 6, 5)));
+
+        List<AccountingPeriodResponseDTO> result = service.findAllByCompany();
+
+        assertThat(result).hasSize(2);
+
+        AccountingPeriodResponseDTO june = result.stream()
+                .filter(p -> p.getMonth() == 6).findFirst().orElseThrow();
+        assertThat(june.getYear()).isEqualTo(2026);
+        assertThat(june.isOpen()).isTrue();
+        assertThat(june.getId()).isNull(); // scaffolded, never persisted
+
+        AccountingPeriodResponseDTO march = result.stream()
+                .filter(p -> p.getMonth() == 3).findFirst().orElseThrow();
+        assertThat(march.getId()).isNotNull(); // the real record -- not duplicated by the scaffold
+    }
+
+    @Test
+    @DisplayName("findAllByCompany() does not scaffold a row for a month that already has a period record")
+    void findAllByCompany_doesNotDuplicateExistingPeriod() {
+        AccountingPeriod marchClosed = existingPeriod(2026, 3, false);
+        when(repository.findByCompanyIdOrderByYearDescMonthDesc(COMPANY_ID)).thenReturn(List.of(marchClosed));
+        when(journalEntryRepository.findDistinctEntryDates(eq(COMPANY_ID), isNull(), isNull()))
+                .thenReturn(List.of(LocalDate.of(2026, 3, 10)));
+
+        List<AccountingPeriodResponseDTO> result = service.findAllByCompany();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getId()).isNotNull();
+    }
+
+    // ============================================================
     // closePeriod()
     // ============================================================
 
@@ -211,6 +254,20 @@ class AccountingPeriodServiceTest {
     }
 
     @Test
+    @DisplayName("closePeriod() rejects closing a month that is already closed -- must be reopened first")
+    void closePeriod_alreadyClosed_throws() {
+        AccountingPeriod alreadyClosed = existingPeriod(2026, 3, false); // open = false
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 3)).thenReturn(Optional.of(alreadyClosed));
+
+        assertThatThrownBy(() -> service.closePeriod(2026, 3, "jaime", "close again"))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("PERIOD_ALREADY_CLOSED"));
+
+        verify(repository, never()).save(any(AccountingPeriod.class));
+    }
+
+    @Test
     @DisplayName("closePeriod() rejects a year outside 1900-2100")
     void closePeriod_invalidYear_throws() {
         assertThatThrownBy(() -> service.closePeriod(1899, 1, "jaime", "x"))
@@ -248,6 +305,10 @@ class AccountingPeriodServiceTest {
         // month 8 has no record at all -- simulate by removing it
         periods.removeIf(p -> p.getMonth() == 8);
         when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(periods);
+        // Both months must show real activity -- since 2026-10-10, an
+        // empty month no longer blocks the year-end close on its own.
+        when(journalEntryRepository.findDistinctEntryDates(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(LocalDate.of(2026, 5, 10), LocalDate.of(2026, 8, 20)));
 
         assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
                 .isInstanceOf(InvalidOperationException.class)
@@ -264,14 +325,40 @@ class AccountingPeriodServiceTest {
     }
 
     @Test
-    @DisplayName("closeYear() rejects sealing the year when no monthly periods exist yet at all")
+    @DisplayName("closeYear() rejects sealing the year when a month has real activity but no period record at all")
     void closeYear_noPeriodsExistYet_throws() {
         when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of());
+        when(journalEntryRepository.findDistinctEntryDates(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(LocalDate.of(2026, 3, 15)));
 
         assertThatThrownBy(() -> service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID))
                 .isInstanceOf(InvalidOperationException.class)
                 .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
                         .isEqualTo("MONTHS_NOT_CLOSED_BEFORE_YEAR_END"));
+    }
+
+    @Test
+    @DisplayName("closeYear() does NOT require closing a month that has zero journal-entry activity (company's books start mid-year)")
+    void closeYear_monthsWithNoActivity_doNotBlockClosing() {
+        // Company's fiscal year only has entries in March and December;
+        // March is closed, the other ten months (including the eight
+        // that never had any activity at all, e.g. a books-start in
+        // November scenario) have no period record whatsoever.
+        AccountingPeriod march = existingPeriod(2026, 3, false); // closed
+        when(repository.findByCompanyIdAndYear(COMPANY_ID, 2026)).thenReturn(List.of(march));
+        when(journalEntryRepository.findDistinctEntryDates(eq(COMPANY_ID), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(List.of(LocalDate.of(2026, 3, 10)));
+        when(repository.findByCompanyIdAndYearAndMonth(COMPANY_ID, 2026, 12)).thenReturn(Optional.empty());
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(true)))
+                .thenReturn(List.of());
+        when(journalEntryRepository.getYearEndBalancesByAccount(eq(COMPANY_ID), any(LocalDate.class), eq(false)))
+                .thenReturn(List.of());
+        stubClosingInfrastructure();
+
+        AccountingPeriodResponseDTO result =
+                service.closeYear(2026, "jaime", "annual close", GAIN_ACCOUNT_ID, LOSS_ACCOUNT_ID);
+
+        assertThat(result.isYearClose()).isTrue();
     }
 
     @Test

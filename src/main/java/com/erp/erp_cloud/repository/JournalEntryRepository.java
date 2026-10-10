@@ -88,6 +88,33 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     boolean existsByCompanyIdAndDocumentNumberAndActiveTrue(Long companyId, String documentNumber);
 
     /**
+     * Distinct dates with at least one journal entry for a company
+     * (startDate/endDate optional -- null means unbounded, same
+     * convention as searchEntries() above). NEW (2026-10-10), added to
+     * tell which months actually have activity. Backs two things in
+     * AccountingPeriodService: (1) validateAllMonthsClosedBeforeYearEnd,
+     * which only requires a month to be explicitly closed before
+     * year-end when it has real movements -- a company whose books
+     * start mid-year (first fiscal year, or migrated from a legacy
+     * system) must not be forced to "close" months that never existed
+     * for it; and (2) the Periodos Contables screen, which shows a
+     * virtual "Abierto" row for any month with activity that was never
+     * explicitly closed/reopened, so it is not invisible just because
+     * no AccountingPeriod row exists yet for it. Deliberately includes
+     * annulled entries -- even a reversed entry means something
+     * happened that month and still deserves an explicit, reviewed
+     * close, not a silent skip.
+     */
+    @Query("SELECT DISTINCT j.entryDate FROM JournalEntry j " +
+            "WHERE j.company.id = :companyId " +
+            "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
+            "AND (:endDate IS NULL OR j.entryDate <= :endDate)")
+    List<LocalDate> findDistinctEntryDates(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
+
+    /**
      * Alias for compatibility with existing Service logic.
      * ADAPTED: Accepts Long companyId and routes to the updated query method.
      */
