@@ -112,15 +112,34 @@ public class FinancialStatementService extends TenantAwareService {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Calculates the balance for each account as of a specific date.
+     * Calculates the RAW balance for each account as of a specific date,
+     * in a uniform debit-positive convention (debit - credit, always --
+     * never flipped per the account's own `nature`).
      *
-     * Balance calculation:
-     * - For Debit accounts (Assets, Expenses): Balance = Total Debits - Total Credits
-     * - For Credit accounts (Liabilities, Equity, Revenue): Balance = Total Credits - Total Debits
+     * BUG FIX (2026-10-10): this used to flip the sign per-account based
+     * on its own `nature` (D/C), so every account came back positive
+     * when it held its own "normal" balance. That broke the moment a
+     * class mixed accounts of opposite nature -- e.g. Pasivos (24)
+     * holding both "IVA Generado" (nature C, a real liability) and "IVA
+     * Descontable" (nature D, a contra-liability that should REDUCE the
+     * net payable). Both came back positive and got added together in
+     * buildSectionsForClass(), so the Balance Sheet showed Pasivos as
+     * debits+credits instead of debits-credits, overstating Pasivos and
+     * breaking Activo = Pasivo + Patrimonio (reported by the user while
+     * testing the 2025 year-end close, comparing against the Balance de
+     * Comprobación Detallado and the legacy SIEWIN report, both of which
+     * correctly NET the two sub-accounts instead of adding them).
+     *
+     * The fix: keep this map nature-agnostic (same uniform convention
+     * already proven correct in JournalEntryService.getTrialBalanceDetailed(),
+     * which nets a header account's children by simple debit-minus-credit
+     * rollup regardless of each leaf's own nature) and let
+     * buildSectionsForClass() orient the sign once, per SECTION class,
+     * not per individual account.
      *
      * @param companyId The active tenant primitive ID
      * @param asOfDate Calculate balances up to and including this date
-     * @return Map of account code to balance
+     * @return Map of account code to raw (debit-positive) balance
      */
     private Map<String, BigDecimal> getAccountBalances(Long companyId, LocalDate asOfDate) {
         log.debug("Calculating account balances for company ID: {} as of {}", companyId, asOfDate);
@@ -132,18 +151,15 @@ public class FinancialStatementService extends TenantAwareService {
 
         for (Object[] row : balances) {
             String accountCode = (String) row[0];
-            String accountNature = (String) row[1];
+            // row[1] (account nature) is no longer used for sign here --
+            // see buildSectionsForClass(), which applies the sign based
+            // on the SECTION's class instead of the individual account.
 
             // Add null checks
             BigDecimal totalDebit = row[2] != null ? (BigDecimal) row[2] : BigDecimal.ZERO;
             BigDecimal totalCredit = row[3] != null ? (BigDecimal) row[3] : BigDecimal.ZERO;
 
-            BigDecimal balance;
-            if ("D".equals(accountNature)) {
-                balance = totalDebit.subtract(totalCredit);
-            } else {
-                balance = totalCredit.subtract(totalDebit);
-            }
+            BigDecimal balance = totalDebit.subtract(totalCredit);
 
             accountBalances.put(accountCode, balance.setScale(2, RoundingMode.HALF_UP));
         }
@@ -180,6 +196,19 @@ public class FinancialStatementService extends TenantAwareService {
 
     /**
      * Generic method to build sections for a specific account class.
+     *
+     * BUG FIX (2026-10-10): sectionTotal used to be a sum of each line's
+     * already-abs()'d display value, which silently ADDED any contra
+     * account (e.g. "IVA Descontable", nature D, living inside the
+     * credit-nature Pasivos class) instead of netting it against the
+     * class's normal accounts -- see getAccountBalances() for the full
+     * story. Fixed by orienting each account's raw (debit-positive)
+     * balance to this class's normal polarity ONCE here -- Pasivos and
+     * Patrimonio are normally credit-nature classes, so their raw
+     * (debit-positive) balance is negated; Activo is normally
+     * debit-nature, so it's used as-is -- and summing THAT signed,
+     * oriented value for the section total, while still showing each
+     * line's absolute value on screen (unchanged display behavior).
      */
     private List<BalanceSheetSection> buildSectionsForClass(
             AccountClass accountClass,
@@ -190,7 +219,10 @@ public class FinancialStatementService extends TenantAwareService {
                 accountClass
         );
 
+        boolean creditNormal = accountClass == AccountClass.LIABILITY || accountClass == AccountClass.EQUITY;
+
         Map<AccountCategory, List<BalanceSheetSection.AccountLine>> categorizedAccounts = new LinkedHashMap<>();
+        Map<AccountCategory, BigDecimal> orientedTotals = new LinkedHashMap<>();
 
         for (Object[] row : accounts) {
             try {
@@ -199,19 +231,25 @@ public class FinancialStatementService extends TenantAwareService {
                 AccountCategory category = (AccountCategory) row[2];
                 Integer displayOrder = row[3] != null ? (Integer) row[3] : 999;
 
-                BigDecimal balance = accountBalances.getOrDefault(accountCode, BigDecimal.ZERO);
+                BigDecimal rawBalance = accountBalances.getOrDefault(accountCode, BigDecimal.ZERO);
+                // Orient to this class's normal direction: positive means
+                // a normal balance for an account of this class, negative
+                // means a contra account working against it (and must
+                // subtract from the section total, not add to it).
+                BigDecimal orientedBalance = creditNormal ? rawBalance.negate() : rawBalance;
 
                 // Only include accounts with non-zero balances
-                if (balance.compareTo(BigDecimal.ZERO) != 0) {
+                if (orientedBalance.compareTo(BigDecimal.ZERO) != 0) {
                     BalanceSheetSection.AccountLine line = BalanceSheetSection.AccountLine.builder()
                             .accountCode(accountCode)
                             .accountName(accountName)
-                            .balance(balance.abs()) // Always positive in display
+                            .balance(orientedBalance.abs()) // Always positive in display
                             .build();
 
                     categorizedAccounts
                             .computeIfAbsent(category, k -> new ArrayList<>())
                             .add(line);
+                    orientedTotals.merge(category, orientedBalance, BigDecimal::add);
                 }
             } catch (ClassCastException e) {
                 log.error("Error casting account data from row: {}", row, e);
@@ -225,9 +263,7 @@ public class FinancialStatementService extends TenantAwareService {
             AccountCategory category = entry.getKey();
             List<BalanceSheetSection.AccountLine> lines = entry.getValue();
 
-            BigDecimal sectionTotal = lines.stream()
-                    .map(BalanceSheetSection.AccountLine::getBalance)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal sectionTotal = orientedTotals.getOrDefault(category, BigDecimal.ZERO);
 
             BalanceSheetSection section = BalanceSheetSection.builder()
                     .sectionName(category.getDisplayName())
@@ -374,6 +410,19 @@ public class FinancialStatementService extends TenantAwareService {
                 .build();
     }
 
+    /**
+     * BUG FIX (2026-10-10): same fix pattern as
+     * FinancialStatementService.buildSectionsForClass() (Balance Sheet)
+     * -- getAccountsForIncomeStatement() now returns the RAW,
+     * nature-agnostic periodBalance (debit - credit) for every account,
+     * and the sign is oriented ONCE here per the section's normal
+     * polarity (REVENUE is normally credit-nature, COST/EXPENSE are
+     * normally debit-nature), so a contra account (e.g. "Devoluciones en
+     * Ventas" under Revenue, or "Descuentos en Compras" under Costs)
+     * correctly SUBTRACTS from the section total instead of being added
+     * to it. Each line's displayed amount is still always positive
+     * (unchanged), only the section total's calculation changed.
+     */
     private List<IncomeStatementSection> buildSectionsForIncomeStatement(
             AccountClass accountClass,
             LocalDate startDate,
@@ -386,7 +435,12 @@ public class FinancialStatementService extends TenantAwareService {
                 endDate
         );
 
+        // Revenue is normally credit-nature; Cost and Expense are
+        // normally debit-nature (see AccountClass).
+        boolean creditNormal = accountClass == AccountClass.REVENUE;
+
         Map<AccountCategory, List<IncomeStatementSection.AccountLine>> categorizedAccounts = new LinkedHashMap<>();
+        Map<AccountCategory, BigDecimal> orientedTotals = new LinkedHashMap<>();
 
         for (Object[] row : accounts) {
             try {
@@ -394,18 +448,20 @@ public class FinancialStatementService extends TenantAwareService {
                 String accountName = (String) row[1];
                 AccountCategory category = (AccountCategory) row[2];
                 Integer displayOrder = row[3] != null ? (Integer) row[3] : 999;
-                BigDecimal periodBalance = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+                BigDecimal rawPeriodBalance = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+                BigDecimal orientedBalance = creditNormal ? rawPeriodBalance.negate() : rawPeriodBalance;
 
-                if (periodBalance.compareTo(BigDecimal.ZERO) != 0) {
+                if (orientedBalance.compareTo(BigDecimal.ZERO) != 0) {
                     IncomeStatementSection.AccountLine line = IncomeStatementSection.AccountLine.builder()
                             .accountCode(accountCode)
                             .accountName(accountName)
-                            .amount(periodBalance.abs())
+                            .amount(orientedBalance.abs())
                             .build();
 
                     categorizedAccounts
                             .computeIfAbsent(category, k -> new ArrayList<>())
                             .add(line);
+                    orientedTotals.merge(category, orientedBalance, BigDecimal::add);
                 }
             } catch (Exception e) {
                 log.error("Error processing account data from row", e);
@@ -418,9 +474,7 @@ public class FinancialStatementService extends TenantAwareService {
             AccountCategory category = entry.getKey();
             List<IncomeStatementSection.AccountLine> lines = entry.getValue();
 
-            BigDecimal sectionTotal = lines.stream()
-                    .map(IncomeStatementSection.AccountLine::getAmount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal sectionTotal = orientedTotals.getOrDefault(category, BigDecimal.ZERO);
 
             IncomeStatementSection section = IncomeStatementSection.builder()
                     .sectionName(category.getDisplayName())

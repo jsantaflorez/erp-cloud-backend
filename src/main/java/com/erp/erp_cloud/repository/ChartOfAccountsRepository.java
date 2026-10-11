@@ -266,6 +266,20 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
 
     /**
      * Gets all accounts for a specific account class for Income Statement generation.
+     *
+     * BUG FIX (2026-10-10): periodBalance used to flip sign per the
+     * account's OWN nature (D/C), same bug as the Balance Sheet's
+     * getAccountBalances() -- see FinancialStatementService for the full
+     * story. That broke the moment a class mixed accounts of opposite
+     * nature, e.g. a contra-revenue account ("Devoluciones en Ventas",
+     * nature D, under the credit-normal REVENUE class) or a contra-cost
+     * account ("Descuentos en Compras", nature C, under the debit-normal
+     * COST/EXPENSE classes) would come back positive and get ADDED
+     * instead of subtracted. Fixed: this query now always returns the
+     * RAW, nature-agnostic balance (debit - credit); the sign is
+     * oriented once per section's normal polarity in
+     * FinancialStatementService.buildSectionsForIncomeStatement(), not
+     * per individual account.
      */
     @Query("""
         SELECT 
@@ -273,12 +287,7 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
             a.name,
             a.accountCategory,
             a.displayOrder,
-            CASE 
-                WHEN a.nature = 'D' THEN 
-                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
-                ELSE 
-                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
-            END as periodBalance
+            COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0) as periodBalance
         FROM JournalEntryItem i
         JOIN i.account a
         JOIN i.journalEntry je
@@ -289,13 +298,8 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
           AND a.postingAccount = true
           AND je.entryDate >= :startDate
           AND je.entryDate <= :endDate
-        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder, a.nature
-        HAVING CASE 
-                WHEN a.nature = 'D' THEN 
-                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
-                ELSE 
-                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
-               END <> 0
+        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder
+        HAVING COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0) <> 0
         ORDER BY a.displayOrder, a.code
     """)
     List<Object[]> getAccountsForIncomeStatement(
@@ -307,6 +311,11 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
 
     /**
      * Alternative simplified query if the above HAVING clause causes issues.
+     *
+     * BUG FIX (2026-10-10): same nature-agnostic fix as
+     * getAccountsForIncomeStatement() above -- kept consistent even
+     * though this variant is currently unused, so it isn't a landmine
+     * if it's ever wired in later.
      */
     @Query("""
         SELECT 
@@ -314,12 +323,7 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
             a.name,
             a.accountCategory,
             a.displayOrder,
-            CASE 
-                WHEN a.nature = 'D' THEN 
-                    COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0)
-                ELSE 
-                    COALESCE(SUM(i.credit), 0) - COALESCE(SUM(i.debit), 0)
-            END as periodBalance
+            COALESCE(SUM(i.debit), 0) - COALESCE(SUM(i.credit), 0) as periodBalance
         FROM JournalEntryItem i
         JOIN i.account a
         JOIN i.journalEntry je
@@ -330,7 +334,7 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
           AND a.postingAccount = true
           AND je.entryDate >= :startDate
           AND je.entryDate <= :endDate
-        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder, a.nature
+        GROUP BY a.code, a.name, a.accountCategory, a.displayOrder
         ORDER BY a.displayOrder, a.code
     """)
     List<Object[]> getAccountsForIncomeStatementSimple(
