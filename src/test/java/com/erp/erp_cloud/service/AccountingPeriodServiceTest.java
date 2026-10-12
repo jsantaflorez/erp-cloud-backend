@@ -316,6 +316,11 @@ class AccountingPeriodServiceTest {
                     InvalidOperationException ioe = (InvalidOperationException) ex;
                     assertThat(ioe.getErrorCode()).isEqualTo("MONTHS_NOT_CLOSED_BEFORE_YEAR_END");
                     assertThat(ioe.getMessage()).contains("5").contains("8");
+                    // 2026-10-12: the exact missing months now also ride in
+                    // getDetails(), so the frontend can name them instead of
+                    // a fixed "enero a noviembre" string -- see
+                    // GlobalExceptionHandler.handleInvalidOperation().
+                    assertThat(ioe.getDetails()).isEqualTo(List.of(5, 8));
                 });
 
         // Must never reach the actual close/save step, nor touch the

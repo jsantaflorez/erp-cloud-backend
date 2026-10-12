@@ -63,15 +63,19 @@ public class GlobalExceptionHandler {
 
 
     @ExceptionHandler(InvalidOperationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleInvalidOperation(InvalidOperationException ex, HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Object>> handleInvalidOperation(InvalidOperationException ex, HttpServletRequest request) {
         log.warn("Invalid operation: {}", ex.getMessage());
         // Prioritize stable code (which the frontend translates) when available;
         // if a throw statement hasn't been migrated yet and only has a message, it
         // continues to work exactly as it does today—100% backward-compatible.
         String responseMessage = ex.getErrorCode() != null ? ex.getErrorCode() : ex.getMessage();
+        // ex.getDetails() rides in the generic `data` field alongside the
+        // stable code -- e.g. the exact months still open before a fiscal
+        // year can close. null (the common case) keeps the response shape
+        // exactly as it was before `details` existed.
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
-                .body(buildError(responseMessage, request));
+                .body(buildError(responseMessage, request, ex.getDetails()));
     }
 
 

@@ -350,10 +350,17 @@ public class AccountingPeriodService extends TenantAwareService {
                 .collect(Collectors.toList());
 
         if (!notClosed.isEmpty()) {
+            // notClosed rides along as `details` (see BusinessException) so
+            // the frontend can name the exact month(s) instead of a fixed
+            // "enero a noviembre" string -- confirmed with the user
+            // (2026-10-12) as a real source of confusion, since it reads
+            // as if every one of those eleven months needs an explicit
+            // close, when in practice only months with real activity do.
             throw new InvalidOperationException(
                     "Cannot close fiscal year " + year + ": months " + notClosed
                             + " must be closed individually first.",
-                    "MONTHS_NOT_CLOSED_BEFORE_YEAR_END"
+                    "MONTHS_NOT_CLOSED_BEFORE_YEAR_END",
+                    notClosed
             );
         }
     }
