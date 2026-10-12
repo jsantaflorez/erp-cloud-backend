@@ -281,4 +281,48 @@ public class ReportController {
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // INCOME STATEMENT (DETAILED / HIERARCHICAL)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Generates the hierarchical Income Statement (Estado de Resultados
+     * / Pérdidas y Ganancias) for a date range -- full PUC rollup at
+     * every level (Ingresos / Gastos / Costo de Ventas), with the
+     * bottom line labeled "Utilidad antes de Impuestos" or "Pérdida
+     * antes de Impuestos" depending on the result's sign.
+     *
+     * Distinct from the existing getIncomeStatement() flat analysis
+     * (gross/operating margins, etc., never exposed over HTTP) -- this
+     * is the report the user asked for 2026-10-12, modeled after their
+     * legacy system's "PERDIDA O GANANCIA" layout.
+     *
+     * @param startDate Start of the reporting period (required)
+     * @param endDate End of the reporting period (required)
+     * @return Hierarchical Income Statement
+     *
+     * Example URL:
+     * - GET /api/v1/reports/income-statement-detailed?startDate=2026-01-01&endDate=2026-12-31
+     */
+    @GetMapping("/income-statement-detailed")
+    @Operation(summary = "Generate Detailed Income Statement (Estado de Resultados)", description = "Shows a full PUC-hierarchy Income Statement (Ingresos / Gastos / Costo de Ventas) for a date range, with Utilidad/Pérdida antes de Impuestos as the bottom line.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Detailed Income Statement generated successfully")
+    public ResponseEntity<ApiResponse<IncomeStatementDetailedReport>> getIncomeStatementDetailed(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate) {
+
+        IncomeStatementDetailedReport data = financialStatementService.getIncomeStatementDetailed(startDate, endDate);
+
+        String message = String.format(
+                "Estado de Resultados generado del %s al %s. %s.",
+                startDate, endDate, data.getResultLabelEs());
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
 }

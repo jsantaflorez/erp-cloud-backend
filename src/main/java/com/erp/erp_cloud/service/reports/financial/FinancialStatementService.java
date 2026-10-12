@@ -1,10 +1,12 @@
 package com.erp.erp_cloud.service.reports.financial;
 
 import com.erp.erp_cloud.dto.reports.financial.*;
+import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.enums.AccountCategory;
 import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.exception.InvalidOperationException;
+import com.erp.erp_cloud.repository.AccountingPeriodRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
@@ -30,6 +32,7 @@ public class FinancialStatementService extends TenantAwareService {
 
     private final JournalEntryRepository journalEntryRepository;
     private final ChartOfAccountsRepository chartOfAccountsRepository;
+    private final AccountingPeriodRepository accountingPeriodRepository;
 
     // ═══════════════════════════════════════════════════════════
     // BALANCE SHEET
@@ -76,6 +79,16 @@ public class FinancialStatementService extends TenantAwareService {
 
         // 4. Build Equity sections
         List<BalanceSheetSection> equitySections = buildEquitySections(accountBalances);
+
+        // 4b. If the fiscal year is still open, Patrimonio does not yet
+        // include the current period's net income/loss -- it only lands
+        // there via the year-end closing entry (AccountingPeriodService.
+        // closeYear()). Append a computed "Resultado del Ejercicio (sin
+        // cerrar)" line so the Balance Sheet balances correctly even
+        // before closing -- see appendUnclosedCurrentYearResult() for
+        // the full rationale.
+        appendUnclosedCurrentYearResult(equitySections, companyId, asOfDate);
+
         BigDecimal totalEquity = calculateTotal(equitySections);
 
         // 5. Verify the accounting equation
@@ -192,6 +205,90 @@ public class FinancialStatementService extends TenantAwareService {
      */
     private List<BalanceSheetSection> buildEquitySections(Map<String, BigDecimal> accountBalances) {
         return buildSectionsForClass(AccountClass.EQUITY, accountBalances);
+    }
+
+    /**
+     * Appends a computed "Resultado del Ejercicio (sin cerrar)" line to
+     * Patrimonio when the fiscal year of {@code asOfDate} has not been
+     * closed yet.
+     *
+     * WHY THIS EXISTS (2026-10-12, reported by the user): Patrimonio only
+     * picks up the current year's net income/loss once the year-end
+     * closing entry posts it there (see AccountingPeriodService.closeYear(),
+     * which debits/credits the Ganancia/Pérdida account the company
+     * configured). Before that closing entry exists, Activo legitimately
+     * does NOT equal Pasivo + Patrimonio by exactly the period's net
+     * income -- that is not a data error, it is the normal state of an
+     * open fiscal year in any accounting system (the legacy SIEWIN
+     * included). The user hit this while reviewing the test company's
+     * Balance General: it flagged "Fuera de Balance" for a $2,000,000
+     * difference that was simply Ingresos $12,000,000 - Gastos
+     * $10,000,000 not yet closed into Patrimonio -- alarming, since it
+     * reads as unbalanced journal entries when double-entry was fine.
+     *
+     * Rather than just softening the alarm (e.g. a "temporary
+     * difference" banner), this computes the actual Resultado del
+     * Ejercicio and adds it to Patrimonio, exactly like
+     * BalanceSheetReport's own equitySections Javadoc already anticipated
+     * ("Share Capital, Retained Earnings, Current Year Profit") -- so the
+     * Balance Sheet balances correctly all year round, and the "Fuera de
+     * Balance" alarm stays reserved for genuine errors (like the
+     * Patrimonio sign-reversal bug fixed earlier this same week).
+     *
+     * Reuses getIncomeStatement() rather than recomputing revenue/cost/
+     * expense totals here, so this always stays in sync with the Income
+     * Statement's own calculation.
+     *
+     * ASSUMPTION: fiscal years are closed in order, as enforced by
+     * closeYear()'s validatePriorYearClosedIfExists() -- there is never
+     * more than one open year at a time in the normal workflow, so
+     * checking only asOfDate's own year is sufficient.
+     *
+     * @param equitySections mutable list this method appends to (no-op if the year is closed or net income is zero)
+     * @param companyId the active tenant's primitive ID
+     * @param asOfDate the Balance Sheet's cutoff date
+     */
+    private void appendUnclosedCurrentYearResult(
+            List<BalanceSheetSection> equitySections,
+            Long companyId,
+            LocalDate asOfDate) {
+
+        int year = asOfDate.getYear();
+        boolean yearClosed = accountingPeriodRepository.existsByCompanyIdAndYearAndYearCloseTrue(companyId, year);
+        if (yearClosed) {
+            return;
+        }
+
+        LocalDate yearStart = LocalDate.of(year, 1, 1);
+        BigDecimal netIncome = getIncomeStatement(yearStart, asOfDate).getNetIncome();
+
+        if (netIncome.compareTo(BigDecimal.ZERO) == 0) {
+            return;
+        }
+
+        boolean isProfit = netIncome.compareTo(BigDecimal.ZERO) > 0;
+
+        BalanceSheetSection.AccountLine line = BalanceSheetSection.AccountLine.builder()
+                .accountCode("")
+                .accountName(isProfit
+                        ? "Utilidad del Ejercicio (sin cerrar)"
+                        : "Pérdida del Ejercicio (sin cerrar)")
+                .balance(netIncome.abs())
+                .build();
+
+        BalanceSheetSection section = BalanceSheetSection.builder()
+                .sectionName(isProfit
+                        ? "Net Income (Current Period, Unclosed)"
+                        : "Net Loss (Current Period, Unclosed)")
+                .sectionNameEs(isProfit
+                        ? "Utilidad del Ejercicio (sin cerrar)"
+                        : "Pérdida del Ejercicio (sin cerrar)")
+                .accountLines(List.of(line))
+                .sectionTotal(netIncome)
+                .displayOrder(Integer.MAX_VALUE - 1)
+                .build();
+
+        equitySections.add(section);
     }
 
     /**
@@ -407,6 +504,195 @@ public class FinancialStatementService extends TenantAwareService {
                 .grossProfitMargin(grossProfitMargin.setScale(1, RoundingMode.HALF_UP))
                 .operatingMargin(operatingMargin.setScale(1, RoundingMode.HALF_UP))
                 .netProfitMargin(netProfitMargin.setScale(1, RoundingMode.HALF_UP))
+                .build();
+    }
+
+    /**
+     * Hierarchical Income Statement (Estado de Resultados / Pérdidas y
+     * Ganancias) for a date range -- full PUC rollup at every level,
+     * same tree-walking approach as
+     * JournalEntryService.getTrialBalanceDetailed(), but scoped to
+     * Ingresos (4), Gastos (5) and Costos (6/7) and with no opening
+     * balance (Income Statement accounts are temporary, they reset
+     * every period).
+     *
+     * Built 2026-10-12 at the user's request, after they showed a
+     * "PERDIDA O GANANCIA" report from their legacy system (Siewin)
+     * with this exact three-block layout (Ingresos / Gastos / Costo de
+     * Ventas, each with a full hierarchical subtotal) and asked for the
+     * bottom line to be labeled "Utilidad antes de Impuestos" or
+     * "Pérdida antes de Impuestos" depending on the sign -- see
+     * IncomeStatementDetailedReport for why that label is computed here
+     * instead of left for the frontend to derive from a signed number.
+     *
+     * Deliberately a NEW report, not an extension of the existing flat
+     * getIncomeStatement()/IncomeStatementReport above: that one groups
+     * by AccountCategory (Operating/Non-Operating/Tax, gross/operating
+     * margins, etc.) for a different kind of analysis, has no endpoint
+     * or frontend screen today, and reshaping it into a full PUC
+     * hierarchy would have meant changing its tested shape for a use
+     * case it was never built for. Both can coexist.
+     */
+    public IncomeStatementDetailedReport getIncomeStatementDetailed(LocalDate startDate, LocalDate endDate) {
+        Company company = TenantContext.getCurrentCompany();
+        Long companyId = currentTenantId();
+
+        log.info("Generating detailed Income Statement for company ID: {} from {} to {}", companyId, startDate, endDate);
+
+        if (startDate == null || endDate == null) {
+            throw new InvalidOperationException("Start date and end date are required for Income Statement");
+        }
+        if (startDate.isAfter(endDate)) {
+            throw new InvalidOperationException("Start date cannot be after end date");
+        }
+        if (endDate.isAfter(LocalDate.now())) {
+            throw new InvalidOperationException("Cannot generate Income Statement for future dates");
+        }
+
+        // Raw period activity (debit, credit) per account code -- same
+        // orientation-free shape as the query the Trial Balance
+        // Detallado uses (fixed 2026-10-10), but EXCLUDING the
+        // auto-generated "CIERRE" closing entry's own postings.
+        //
+        // BUG FIX (2026-10-12): using plain getPeriodActivity() here
+        // (like the Trial Balance Detallado does) made this report come
+        // back empty for any CLOSED year -- the closing entry is dated
+        // December 31 of that same year, inside the report's own date
+        // range, and its lines zero out every Ingresos/Gastos/Costos
+        // account by design (that's how the net result moves to
+        // Patrimonio). Summed together with the year's real activity,
+        // every result account nets to (near) zero. The Estado de
+        // Resultados has to show the period's real economic activity
+        // regardless of whether the year has been closed since -- the
+        // user needs to audit a closed year's P&L exactly like the
+        // legacy SIEWIN system allowed, not see it wiped out by its own
+        // closing entry. getPeriodActivityExcludingClosingEntries()
+        // (new) is a separate query so the Trial Balance Detallado,
+        // which legitimately DOES want the closing entry's effect
+        // (showing the real zeroed closing balance of each result
+        // account), is completely unaffected by this fix.
+        Map<String, BigDecimal[]> periodActivityByCode = new HashMap<>();
+        List<Object[]> activities = chartOfAccountsRepository.getPeriodActivityExcludingClosingEntries(companyId, startDate, endDate);
+        for (Object[] row : activities) {
+            String code = (String) row[0];
+            BigDecimal periodDebit = row[4] != null ? (BigDecimal) row[4] : BigDecimal.ZERO;
+            BigDecimal periodCredit = row[5] != null ? (BigDecimal) row[5] : BigDecimal.ZERO;
+            periodActivityByCode.put(code, new BigDecimal[]{
+                    periodDebit.setScale(2, RoundingMode.HALF_UP),
+                    periodCredit.setScale(2, RoundingMode.HALF_UP)
+            });
+        }
+
+        // Full active chart (not just posting accounts) -- header
+        // accounts never appear in getPeriodActivity() directly, but
+        // still need a row here with a rolled-up subtotal. Already
+        // ordered by code, which -- since every PUC code is a literal
+        // string prefix of its children's codes -- is already a valid
+        // pre-order tree traversal, same as getTrialBalanceDetailed().
+        List<ChartOfAccounts> allAccounts = chartOfAccountsRepository.findByCompanyIdAndActiveTrueOrderByCodeAsc(companyId);
+
+        // Raw (debit - credit) rolled up to every ancestor. Oriented to
+        // a readable sign only afterwards, per top-level class -- never
+        // per account's own nature, so a contra account (e.g.
+        // "Devoluciones en Ventas" under Ingresos) nets correctly
+        // against its siblings instead of getting its own sign flip.
+        Map<String, BigDecimal> rolledUpRaw = new HashMap<>();
+        for (ChartOfAccounts account : allAccounts) {
+            rolledUpRaw.put(account.getCode(), BigDecimal.ZERO);
+        }
+        for (ChartOfAccounts account : allAccounts) {
+            if (!account.isPostingAccount()) {
+                continue; // only leaves ever have direct activity to roll up
+            }
+            BigDecimal[] activity = periodActivityByCode.getOrDefault(
+                    account.getCode(), new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+            BigDecimal rawNet = activity[0].subtract(activity[1]);
+
+            ChartOfAccounts current = account;
+            while (current != null) {
+                rolledUpRaw.merge(current.getCode(), rawNet, BigDecimal::add);
+                current = current.getParent();
+            }
+        }
+
+        List<IncomeStatementLineDetailed> revenueLines = new ArrayList<>();
+        List<IncomeStatementLineDetailed> expenseLines = new ArrayList<>();
+        List<IncomeStatementLineDetailed> costLines = new ArrayList<>();
+        BigDecimal totalRevenue = BigDecimal.ZERO;
+        BigDecimal totalExpenses = BigDecimal.ZERO;
+        BigDecimal totalCosts = BigDecimal.ZERO;
+
+        for (ChartOfAccounts account : allAccounts) {
+            if (!account.isIncomeStatementAccount()) {
+                continue; // Balance Sheet accounts (1,2,3) never belong here
+            }
+
+            BigDecimal raw = rolledUpRaw.getOrDefault(account.getCode(), BigDecimal.ZERO)
+                    .setScale(2, RoundingMode.HALF_UP);
+
+            boolean isRevenue = account.getAccountClass() == AccountClass.REVENUE;
+            BigDecimal amount = isRevenue ? raw.negate() : raw;
+
+            if (amount.compareTo(BigDecimal.ZERO) == 0) {
+                continue; // nothing to show for this branch -- same
+                          // "hide genuinely empty rows" rule as the
+                          // Trial Balance Detallado and Cost Center /
+                          // Third Party reports.
+            }
+
+            IncomeStatementLineDetailed line = IncomeStatementLineDetailed.builder()
+                    .accountCode(account.getCode())
+                    .accountName(account.getName())
+                    .level(account.getLevel() != null ? account.getLevel().intValue() : 1)
+                    .postingAccount(account.isPostingAccount())
+                    .amount(amount)
+                    .build();
+
+            switch (account.getAccountClass()) {
+                case REVENUE -> {
+                    revenueLines.add(line);
+                    if (account.isPostingAccount()) {
+                        totalRevenue = totalRevenue.add(amount);
+                    }
+                }
+                case EXPENSE -> {
+                    expenseLines.add(line);
+                    if (account.isPostingAccount()) {
+                        totalExpenses = totalExpenses.add(amount);
+                    }
+                }
+                case COST -> {
+                    costLines.add(line);
+                    if (account.isPostingAccount()) {
+                        totalCosts = totalCosts.add(amount);
+                    }
+                }
+                default -> { } // unreachable: isIncomeStatementAccount() already filtered to 4/5/6
+            }
+        }
+
+        totalRevenue = totalRevenue.setScale(2, RoundingMode.HALF_UP);
+        totalExpenses = totalExpenses.setScale(2, RoundingMode.HALF_UP);
+        totalCosts = totalCosts.setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal netResultBeforeTaxes = totalRevenue.subtract(totalExpenses).subtract(totalCosts)
+                .setScale(2, RoundingMode.HALF_UP);
+        boolean profit = netResultBeforeTaxes.compareTo(BigDecimal.ZERO) >= 0;
+
+        return IncomeStatementDetailedReport.builder()
+                .companyName(company.getLegalName())
+                .startDate(startDate)
+                .endDate(endDate)
+                .generatedAt(LocalDateTime.now())
+                .revenueLines(revenueLines)
+                .totalRevenue(totalRevenue)
+                .expenseLines(expenseLines)
+                .totalExpenses(totalExpenses)
+                .costLines(costLines)
+                .totalCosts(totalCosts)
+                .netResultBeforeTaxes(netResultBeforeTaxes)
+                .resultLabel(profit ? "Profit Before Taxes" : "Loss Before Taxes")
+                .resultLabelEs(profit ? "Utilidad antes de Impuestos" : "Pérdida antes de Impuestos")
                 .build();
     }
 

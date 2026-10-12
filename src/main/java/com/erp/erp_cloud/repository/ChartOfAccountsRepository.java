@@ -265,6 +265,69 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     );
 
     /**
+     * Same as {@link #getPeriodActivity} (debits/credits per posting
+     * account within a date range), EXCLUDING postings made through the
+     * auto-generated "CIERRE" (year-end closing) DocumentType.
+     *
+     * BUG FIX (2026-10-12): the hierarchical Estado de Resultados
+     * (getIncomeStatementDetailed()) used getPeriodActivity() directly,
+     * same as the Trial Balance Detallado -- correct for the Trial
+     * Balance, since it legitimately needs the closing entry's effect
+     * to show the real (zeroed) closing balance of each result account.
+     * But for a full fiscal year range, the closing entry is dated
+     * December 31 of that same year (AccountingPeriodService.
+     * buildClosingEntry(), entry.setEntryDate(LocalDate.of(year, 12,
+     * 31))) -- squarely inside the report's own date range. Its lines
+     * debit every Ingresos account for its full credit balance and
+     * credit every Gastos/Costos account for its full debit balance,
+     * so summing it together with the year's real activity nets every
+     * result account to (near) zero. That made the Estado de
+     * Resultados come back empty for any CLOSED year, while an open
+     * year (no closing entry yet) looked fine -- reported by the user:
+     * "el reporte debe poder consultarse para cualquier año [...],
+     * aunque las cuentas ya se hayan trasladado al patrimonio", same
+     * as their legacy SIEWIN system. The Estado de Resultados is a
+     * report of the period's own economic activity, not of post-closing
+     * balances, so it has to exclude the closing entry's own lines
+     * regardless of whether the year is open or closed -- fixing this
+     * by filtering it out here, as its own dedicated query, keeps
+     * getPeriodActivity() itself (and the Trial Balance Detallado that
+     * depends on it) completely unchanged.
+     *
+     * CLOSING_DOC_TYPE_CODE ("CIERRE") is a fixed, well-known code --
+     * DocumentTypeService.findOrCreateClosingDocumentType() always
+     * creates exactly one DocumentType with this code per company, and
+     * every closing entry is posted through it (never reused for
+     * anything else), so matching on the code is safe and requires no
+     * join on company for the DocumentType itself (je already carries
+     * the tenant's own document type).
+     */
+    @Query("""
+        SELECT 
+            a.code,
+            a.name,
+            a.accountClass,
+            a.closesAtYearEnd,
+            COALESCE(SUM(i.debit), 0),
+            COALESCE(SUM(i.credit), 0)
+        FROM JournalEntryItem i
+        JOIN i.account a
+        JOIN i.journalEntry je
+        WHERE a.company.id = :companyId
+          AND je.entryDate >= :startDate
+          AND je.entryDate <= :endDate
+          AND a.postingAccount = true
+          AND (je.documentType.code IS NULL OR je.documentType.code <> 'CIERRE')
+        GROUP BY a.code, a.name, a.accountClass, a.closesAtYearEnd
+        ORDER BY a.code
+    """)
+    List<Object[]> getPeriodActivityExcludingClosingEntries(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    /**
      * Gets all accounts for a specific account class for Income Statement generation.
      *
      * BUG FIX (2026-10-10): periodBalance used to flip sign per the
