@@ -389,6 +389,18 @@ class JournalEntryServiceTest {
     }
 
     @Test
+    @DisplayName("create() rejects CIERRE as a manually-chosen document type (REGRESSION GUARD)")
+    void create_closingDocType_throws() {
+        testDocType.setCode("CIERRE");
+
+        assertThatThrownBy(() -> service.create(balancedRequest(LocalDate.now())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("reserved");
+                    assertThat(ex.getErrorCode()).isEqualTo("CLOSING_DOC_TYPE_RESERVED");
+                });
+    }
+
+    @Test
     @DisplayName("create() rejects a duplicate document number as a concurrency guard")
     void create_duplicateDocumentNumber_throws() {
         when(repository.existsByCompanyIdAndDocumentNumber(COMPANY_ID, "FV-1")).thenReturn(true);

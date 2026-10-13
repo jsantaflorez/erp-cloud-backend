@@ -136,6 +136,23 @@ public class JournalEntryService extends TenantAwareService {
             throw new InvalidOperationException("This Document Type does not belong to the current company.");
         }
 
+        // NEW (2026-10-13, user request): CIERRE is reserved for the
+        // system's own year-end closing process (see
+        // AccountingPeriodService.buildAndSaveClosingEntry(), which saves
+        // directly through journalEntryRepository and never goes through
+        // this create() path -- so this guard can never block the real
+        // automatic closing). A user manually picking CIERRE here would
+        // produce a hand-made entry indistinguishable from the system's
+        // own closing entry, yet never actually tied to a year-end
+        // calculation -- confusing at best, and it would itself become
+        // permanently immutable per CLOSING_ENTRY_IMMUTABLE above with no
+        // way to fix a mistake in it.
+        if (DocumentTypeService.CLOSING_DOC_TYPE_CODE.equals(docType.getCode())) {
+            throw new InvalidOperationException(
+                    "The year-end closing document type is reserved for the automatic closing process and cannot be used for manual entries.",
+                    "CLOSING_DOC_TYPE_RESERVED");
+        }
+
         return docType;
     }
 
