@@ -691,6 +691,28 @@ class JournalEntryServiceTest {
     }
 
     @Test
+    @DisplayName("update() rejects editing a year-end closing entry (CIERRE) (REGRESSION GUARD)")
+    void update_closingEntry_throws() {
+        // NEW (2026-10-12, user request): a CIERRE entry is auto-generated
+        // by AccountingPeriodService.closeYear() and must never be
+        // hand-edited -- doing so would desync it from the closing
+        // calculation it represents. Mirrors the annulled/inactive guards.
+        JournalEntry entry = existingEntry(LocalDate.now());
+        DocumentType closingType = new DocumentType();
+        closingType.setId(99L);
+        closingType.setCode("CIERRE");
+        closingType.setCompany(testCompany);
+        entry.setDocumentType(closingType);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        assertThatThrownBy(() -> service.update(999L, balancedRequest(entry.getEntryDate())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    assertThat(ex.getMessage()).contains("closing");
+                    assertThat(ex.getErrorCode()).isEqualTo("CLOSING_ENTRY_IMMUTABLE");
+                });
+    }
+
+    @Test
     @DisplayName("update() rejects editing an inactive entry (REGRESSION GUARD)")
     void update_inactiveEntry_throws() {
         JournalEntry entry = existingEntry(LocalDate.now());

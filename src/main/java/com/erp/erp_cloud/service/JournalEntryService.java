@@ -295,6 +295,21 @@ public class JournalEntryService extends TenantAwareService {
                     "Cannot edit an inactive journal entry.", "ENTRY_INACTIVE_IMMUTABLE");
         }
 
+        // NEW (2026-10-12, user request): a year-end closing entry
+        // ("CIERRE", see DocumentTypeService.findOrCreateClosingDocumentType()
+        // / AccountingPeriodService.closeYear()) is an auto-generated,
+        // system-computed entry that zeroes every Ingresos/Gastos/Costos
+        // account to move the net result into Patrimonio. Hand-editing it
+        // would desync it from the closing calculation it represents and
+        // corrupt the audit trail -- same reasoning as the
+        // ENTRY_ANNULLED_IMMUTABLE/ENTRY_INACTIVE_IMMUTABLE guards above.
+        // documentType is FetchType.LAZY, but update() runs inside its own
+        // @Transactional, so the lazy load here is safe.
+        if (DocumentTypeService.CLOSING_DOC_TYPE_CODE.equals(existingEntry.getDocumentType().getCode())) {
+            throw new InvalidOperationException(
+                    "Cannot edit a year-end closing entry.", "CLOSING_ENTRY_IMMUTABLE");
+        }
+
         // 3. PERIOD VALIDATION
         accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), companyId);
 

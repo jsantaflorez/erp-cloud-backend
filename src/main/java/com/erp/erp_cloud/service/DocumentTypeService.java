@@ -27,7 +27,10 @@ public class DocumentTypeService extends TenantAwareService {
 
     // NEW (2026-10-03): fixed code for the auto-created year-end closing
     // document type (Cierre de Año). See findOrCreateClosingDocumentType.
-    private static final String CLOSING_DOC_TYPE_CODE = "CIERRE";
+    // Made PUBLIC (2026-10-12) so JournalEntryService.update() can check
+    // against it too, instead of duplicating the literal "CIERRE" string
+    // -- a closing entry must never be editable by hand (see its guard).
+    public static final String CLOSING_DOC_TYPE_CODE = "CIERRE";
 
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
