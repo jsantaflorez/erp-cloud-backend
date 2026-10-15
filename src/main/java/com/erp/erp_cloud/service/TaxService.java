@@ -154,6 +154,7 @@ public class TaxService extends TenantAwareService {
         entity.setCode(request.getCode());
         entity.setName(request.getName());
         entity.setType(request.getType());
+        entity.setCategory(request.getCategory());
         entity.setRate(request.getRate());
         entity.setRequiresBase(request.isRequiresBase());
         entity.setMinimumBase(request.getMinimumBase());
@@ -195,6 +196,7 @@ public class TaxService extends TenantAwareService {
         dto.setCode(entity.getCode());
         dto.setName(entity.getName());
         dto.setType(entity.getType());
+        dto.setCategory(entity.getCategory());
         dto.setRate(entity.getRate());
         dto.setRequiresBase(entity.isRequiresBase());
         dto.setMinimumBase(entity.getMinimumBase());

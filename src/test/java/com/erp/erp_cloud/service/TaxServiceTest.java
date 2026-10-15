@@ -5,6 +5,7 @@ import com.erp.erp_cloud.dto.TaxResponseDTO;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.Tax;
+import com.erp.erp_cloud.enums.TaxCategory;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
@@ -86,7 +87,8 @@ class TaxServiceTest {
         TaxRequest req = new TaxRequest();
         req.setCode(code);
         req.setName("IVA");
-        req.setType("IVA");
+        req.setType("IVA_GENERADO");
+        req.setCategory(TaxCategory.IVA);
         req.setRate(new BigDecimal("19"));
         req.setRequiresBase(true);
         req.setMinimumBase(BigDecimal.ZERO);

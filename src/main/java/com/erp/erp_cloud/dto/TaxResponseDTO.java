@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.dto;
 
+import com.erp.erp_cloud.enums.TaxCategory;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -10,6 +11,7 @@ public class TaxResponseDTO {
     private String code;
     private String name;
     private String type;
+    private TaxCategory category;
     private BigDecimal rate;
     private boolean requiresBase;
     private BigDecimal minimumBase;

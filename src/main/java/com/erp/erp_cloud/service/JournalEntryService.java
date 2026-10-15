@@ -12,6 +12,7 @@ import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.ChartOfAccountsRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
+import com.erp.erp_cloud.repository.TaxRepository;
 import com.erp.erp_cloud.dto.TrialBalanceLine;
 import com.erp.erp_cloud.dto.reports.financial.TrialBalanceReport;
 
@@ -33,10 +34,14 @@ import java.util.*;
 /**
  * Service for managing Journal Entries (Comprobantes Contables).
  *
- * Current Version: Manual Entry Only
- * - No automatic tax calculation
- * - No automatic balancing
- * - Full accountant control over all entries
+ * Current Version:
+ * - No automatic balancing -- full accountant control over every line.
+ * - The one exception (2026-10-14): a line whose account is
+ *   parameterized with a Tax (see handleTax()) has its debit/credit
+ *   computed automatically from a user-entered base gravable, so the
+ *   fiscal reports (Informe de IVA, Informe/Certificado de
+ *   Retenciones) have a reliable base + amount to read, instead of
+ *   reverse-engineering the base from whatever got posted.
  */
 @Service
 @RequiredArgsConstructor
@@ -52,6 +57,7 @@ public class JournalEntryService extends TenantAwareService {
     private final DocumentTypeService docTypeService;
     private final AccountingPeriodService accountingPeriodService;
     private final CompanyRepository companyRepository;
+    private final TaxRepository taxRepository;
 
     // ═══════════════════════════════════════════════════════════
     // CREATE OPERATIONS
@@ -75,17 +81,24 @@ public class JournalEntryService extends TenantAwareService {
             throw new InvalidOperationException("Journal entry must contain at least one item.");
         }
 
-        // 3. CRITICAL: Balance Validation (Zero Tolerance)
-        validateBalance(request);
-
-        // 4. Document Type Setup and Validation
+        // 3. Document Type Setup and Validation
         DocumentType docType = validateAndGetDocumentType(request.getDocumentTypeId(), companyId);
 
-        // 5. Create Entry Header
+        // 4. Create Entry Header
         JournalEntry entry = createEntryHeader(docType, request, companyId);
 
-        // 6. Process Line Items
+        // 5. Process Line Items
         processLineItems(entry, request, companyId);
+
+        // 6. CRITICAL: Balance Validation (Zero Tolerance). Deliberately
+        // run AFTER processLineItems, not on the raw request -- a
+        // tax-linked line's real debit/credit are only known once
+        // handleTax() has recalculated them from the base (see
+        // processLineItems()); checking the client's raw submitted
+        // amounts here would reject a perfectly balanced tax-linked
+        // entry whose raw numbers don't happen to match what the server
+        // is about to compute.
+        validateBalance(entry.getItems());
 
         // 7. Save and Return
         log.info("Saving journal entry {} with {} items for company ID {}",
@@ -100,13 +113,19 @@ public class JournalEntryService extends TenantAwareService {
 
     /**
      * Validates that total debits equal total credits.
+     *
+     * NEW (2026-10-14): takes the entry's own items, not the raw
+     * request -- must run after processLineItems() so a tax-linked
+     * line's amount reflects handleTax()'s server-side recalculation
+     * from the base, not whatever (possibly irrelevant) debit/credit
+     * the client happened to submit for that line.
      */
-    private void validateBalance(JournalEntryRequest request) {
-        BigDecimal totalDebit = request.getItems().stream()
+    private void validateBalance(List<JournalEntryItem> items) {
+        BigDecimal totalDebit = items.stream()
                 .map(i -> i.getDebit() != null ? i.getDebit() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal totalCredit = request.getItems().stream()
+        BigDecimal totalCredit = items.stream()
                 .map(i -> i.getCredit() != null ? i.getCredit() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -198,9 +217,6 @@ public class JournalEntryService extends TenantAwareService {
             var itemDto = request.getItems().get(i);
             final int itemIndex = i;
 
-            // Validate amounts
-            validateItemAmounts(itemDto.getDebit(), itemDto.getCredit(), itemIndex);
-
             // Fetch and validate account
             ChartOfAccounts account = fetchAndValidateAccount(itemDto.getAccountId(), companyId);
 
@@ -214,6 +230,17 @@ public class JournalEntryService extends TenantAwareService {
             // Handle optional fields based on account configuration
             handleThirdParty(item, itemDto, account, companyId);
             handleCostCenter(item, itemDto, account, companyId);
+
+            // Tax-linked accounts: derive the Tax from the account and
+            // recalculate debit/credit from the submitted base. Must run
+            // before validateItemAmounts() below, since it may overwrite
+            // item.debit/item.credit with the server-computed amounts.
+            handleTax(item, itemDto, account, companyId);
+
+            // Validate amounts (on the item's final values: either the
+            // client-submitted debit/credit, or -- for a tax-linked line --
+            // the amounts handleTax() just computed from the base).
+            validateItemAmounts(item.getDebit(), item.getCredit(), itemIndex);
 
             entry.addItem(item);
         }
@@ -335,19 +362,21 @@ public class JournalEntryService extends TenantAwareService {
             accountingPeriodService.validateDateIsOpen(request.getEntryDate(), companyId);
         }
 
-        // 4. FINANCIAL VALIDATION
-        validateBalance(request);
-
         log.info("Updating journal entry {} (ID: {}) for company ID {}",
                 existingEntry.getDocumentNumber(), id, companyId);
 
-        // 5. HEADER UPDATE
+        // 4. HEADER UPDATE
         existingEntry.setEntryDate(request.getEntryDate());
         existingEntry.setDescription(request.getDescription());
 
-        // 6. ITEMS UPDATE
+        // 5. ITEMS UPDATE
         existingEntry.getItems().clear();
         processLineItems(existingEntry, request, companyId);
+
+        // 6. FINANCIAL VALIDATION -- same reasoning as create(): run on
+        // the final, possibly tax-recalculated item amounts, after
+        // processLineItems(), never on the client's raw request.
+        validateBalance(existingEntry.getItems());
 
         JournalEntry saved = repository.save(existingEntry);
         log.info("Journal entry {} updated successfully", saved.getDocumentNumber());
@@ -467,6 +496,80 @@ public class JournalEntryService extends TenantAwareService {
 
             item.setCostCenter(costCenter);
         }
+    }
+
+    /**
+     * Tax-linked accounts (2026-10-14, user-mandated design): if the item's
+     * account is parameterized with a Tax (Tax.account, a one-to-one link
+     * enforced by uk_tax_company_account), the client supplies only the
+     * taxable base (taxBase) and the server derives the Tax and computes
+     * the actual debit/credit from base x rate / 100, overwriting whatever
+     * debit/credit the client sent for this line. This is the ONE
+     * exception to "the client controls every line's amounts" -- required
+     * for DIAN/Informacion Exogena consistency (see class javadoc).
+     *
+     * If the account is not tax-linked, this is a no-op and the item's
+     * debit/credit stay exactly as the client submitted them.
+     */
+    private void handleTax(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Long companyId) {
+        Tax tax = taxRepository.findByCompanyIdAndAccount(companyId, account).orElse(null);
+        if (tax == null) {
+            return;
+        }
+
+        if (!tax.isActive()) {
+            throw new InvalidOperationException(
+                    String.format("Tax %s (%s) linked to account %s is inactive and cannot be used.",
+                            tax.getCode(), tax.getName(), account.getCode())
+            );
+        }
+
+        BigDecimal base = dto.getTaxBase();
+        if (tax.isRequiresBase() && base == null) {
+            throw new InvalidOperationException(
+                    String.format("Account %s (%s) is linked to Tax %s, which requires a taxable base (Base Gravable) to be specified.",
+                            account.getCode(), account.getName(), tax.getCode())
+            );
+        }
+        if (base == null) {
+            base = BigDecimal.ZERO;
+        }
+
+        // NEW (2026-10-15, found by a test exposing a real gap): a base
+        // below the Tax's minimumBase cannot just compute to a $0
+        // debit/credit -- every line in this service must carry exactly
+        // one nonzero side (validateItemAmounts(), checked right after
+        // this method returns), so silently zeroing both sides here
+        // would only surface downstream as the generic, confusing "Item
+        // #N must have either debit or credit greater than zero" error.
+        // Reject it here instead, with a message that actually explains
+        // why: below the minimum, this Tax simply doesn't apply, so the
+        // line shouldn't be submitted at all.
+        BigDecimal absBase = base.abs();
+        if (tax.getMinimumBase() != null && absBase.compareTo(tax.getMinimumBase()) < 0) {
+            throw new InvalidOperationException(
+                    String.format("The base (%s) for account %s (%s) is below Tax %s's minimum base (%s) -- "
+                                    + "no %s applies. Remove this line or enter a base that reaches the minimum.",
+                            absBase.setScale(2, RoundingMode.HALF_UP),
+                            account.getCode(), account.getName(), tax.getCode(),
+                            tax.getMinimumBase().setScale(2, RoundingMode.HALF_UP),
+                            tax.getCode())
+            );
+        }
+
+        BigDecimal calculated = absBase.multiply(tax.getRate())
+                .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+
+        if ("D".equalsIgnoreCase(tax.getSign())) {
+            item.setDebit(calculated);
+            item.setCredit(BigDecimal.ZERO);
+        } else {
+            item.setCredit(calculated);
+            item.setDebit(BigDecimal.ZERO);
+        }
+
+        item.setTax(tax);
+        item.setTaxBase(base);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -815,6 +918,17 @@ public class JournalEntryService extends TenantAwareService {
                     if (item.getCostCenter() != null) {
                         i.setCostCenterId(item.getCostCenter().getId());
                         i.setCostCenterName(item.getCostCenter().getName());
+                    }
+                    if (item.getTax() != null) {
+                        i.setTaxId(item.getTax().getId());
+                        i.setTaxCode(item.getTax().getCode());
+                        i.setTaxName(item.getTax().getName());
+                        // NEW (2026-10-15): type is free text now, not
+                        // an enum -- see TaxCategory's javadoc for why.
+                        i.setTaxType(item.getTax().getType());
+                        i.setTaxCategory(item.getTax().getCategory().name());
+                        i.setTaxRate(item.getTax().getRate());
+                        i.setTaxBase(item.getTaxBase());
                     }
                     return i;
                 })

@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.entity;
 
+import com.erp.erp_cloud.enums.TaxCategory;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.Entity;
 import java.time.LocalDateTime;
@@ -37,9 +38,24 @@ public class Tax extends BaseEntity implements Serializable {
     @Column(nullable = false, length = 100)
     private String name;
 
-    // IVA, RETEFUENTE, RETIVA, ICA, etc.
-    @Column(nullable = false, length = 20)
+    // Free text (2026-10-15, user request): the specific legal/fiscal
+    // name of this tax -- "RETEFUENTE", "RETEICA", "IMPOCONSUMO",
+    // "IMP_CARBONO", or anything a future tax reform invents. NEVER
+    // branched on in code (see TaxCategory's javadoc for the full
+    // reasoning) -- purely descriptive, shown in the UI and used only
+    // to sub-group lines within the Informe de Retenciones/Fase 4
+    // certificate. Widened to 30 chars (was 20) for headroom on longer
+    // future names.
+    @Column(nullable = false, length = 30)
     private String type;
+
+    // NEW (2026-10-15, user request): the structural category that
+    // actually drives report behavior -- see TaxCategory's javadoc.
+    // This is what Fase 3 (Informe de IVA) and Fase 4 (Informe de
+    // Retenciones) filter/group on; `type` above never is.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private TaxCategory category;
 
     @Column(nullable = false, precision = 10, scale = 4)
     private BigDecimal rate;

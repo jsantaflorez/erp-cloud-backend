@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.dto;
 
+import com.erp.erp_cloud.enums.TaxCategory;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 import java.math.BigDecimal;
@@ -15,9 +16,12 @@ public class TaxRequest {
     @Size(max = 100, message = "Name must be up to 100 characters")
     private String name;
 
-    @NotBlank(message = "Tax type is required (IVA, RETE, etc.)")
-    @Size(max = 20)
+    @NotBlank(message = "Tax type is required")
+    @Size(max = 30, message = "Type must be up to 30 characters")
     private String type;
+
+    @NotNull(message = "Tax category is required")
+    private TaxCategory category;
 
     @NotNull(message = "Tax rate is required")
     @DecimalMin(value = "0.0", message = "Rate cannot be negative")

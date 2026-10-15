@@ -11,6 +11,7 @@ import com.erp.erp_cloud.repository.CompanyRepository;
 import com.erp.erp_cloud.repository.CostCenterRepository;
 import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
+import com.erp.erp_cloud.repository.TaxRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -66,6 +67,7 @@ class JournalEntryServiceTest {
     @Mock private DocumentTypeService docTypeService;
     @Mock private AccountingPeriodService accountingPeriodService;
     @Mock private CompanyRepository companyRepository;
+    @Mock private TaxRepository taxRepository;
 
     private JournalEntryService service;
     private Company testCompany;
@@ -79,7 +81,7 @@ class JournalEntryServiceTest {
         TenantContext.setCurrentTenant(COMPANY_ID);
 
         service = new JournalEntryService(repository, accountRepository, thirdPartyRepository,
-                costCenterRepository, docTypeService, accountingPeriodService, companyRepository);
+                costCenterRepository, docTypeService, accountingPeriodService, companyRepository, taxRepository);
 
         testCompany = new Company();
         testCompany.setId(COMPANY_ID);
@@ -553,6 +555,115 @@ class JournalEntryServiceTest {
         assertThatThrownBy(() -> service.create(request))
                 .isInstanceOf(InvalidOperationException.class)
                 .hasMessageContaining("inactive");
+    }
+
+    // ============================================================
+    // create() -- tax-linked accounts (2026-10-14, Informe de IVA /
+    // Retenciones feature). handleTax() derives the Tax from the
+    // account (TaxRepository.findByCompanyIdAndAccount) and -- when
+    // found -- recalculates that line's debit/credit from the
+    // submitted taxBase, overriding whatever debit/credit the client
+    // sent. These tests use a fresh, unbalanced-looking request on
+    // purpose: the point is to prove the SERVER's calculated amount is
+    // what ends up persisted/validated, not the client's.
+    // ============================================================
+
+    private Tax taxFixture(ChartOfAccounts account, String rate, String sign, boolean requiresBase, String minimumBase) {
+        Tax tax = new Tax();
+        tax.setId(900L);
+        tax.setCompany(testCompany);
+        tax.setCode("IVA19");
+        tax.setName("IVA Generado 19%");
+        tax.setType("IVA_GENERADO");
+        tax.setCategory(com.erp.erp_cloud.enums.TaxCategory.IVA);
+        tax.setRate(new BigDecimal(rate));
+        tax.setRequiresBase(requiresBase);
+        tax.setMinimumBase(minimumBase != null ? new BigDecimal(minimumBase) : BigDecimal.ZERO);
+        tax.setSign(sign);
+        tax.setActive(true);
+        tax.setAccount(account);
+        return tax;
+    }
+
+    @Test
+    @DisplayName("create() on a tax-linked account computes debit/credit from the submitted base, ignoring the client's own debit/credit")
+    void create_taxLinkedAccount_calculatesAmountFromBase() {
+        Tax tax = taxFixture(creditAccount, "19", "C", true, null);
+        when(taxRepository.findByCompanyIdAndAccount(COMPANY_ID, creditAccount)).thenReturn(Optional.of(tax));
+
+        JournalEntryRequest request = balancedRequest(LocalDate.now());
+        // Client sends a bogus credit of 100.00, but the server must
+        // ignore it and compute 1,000,000 * 19% = 190,000 instead.
+        request.getItems().get(1).setTaxBase(new BigDecimal("1000000"));
+        request.getItems().get(0).setDebit(new BigDecimal("190000"));
+        request.getItems().get(0).setCredit(BigDecimal.ZERO);
+
+        JournalEntryResponseDTO result = service.create(request);
+
+        JournalEntryResponseDTO.ItemResponse taxItem = result.getItems().get(1);
+        assertThat(taxItem.getCredit()).isEqualByComparingTo("190000.00");
+        assertThat(taxItem.getDebit()).isEqualByComparingTo("0.00");
+        assertThat(taxItem.getTaxId()).isEqualTo(900L);
+        assertThat(taxItem.getTaxBase()).isEqualByComparingTo("1000000");
+    }
+
+    @Test
+    @DisplayName("create() rejects a tax-linked line with no base when the Tax requires one")
+    void create_taxLinkedAccount_missingBase_throws() {
+        Tax tax = taxFixture(creditAccount, "19", "C", true, null);
+        when(taxRepository.findByCompanyIdAndAccount(COMPANY_ID, creditAccount)).thenReturn(Optional.of(tax));
+
+        JournalEntryRequest request = balancedRequest(LocalDate.now());
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(InvalidOperationException.class)
+                .hasMessageContaining("requires a taxable base");
+    }
+
+    @Test
+    @DisplayName("create() rejects a tax-linked line whose base is below the Tax's configured minimum")
+    void create_taxLinkedAccount_baseBelowMinimum_throws() {
+        // A base below minimumBase can't just compute to a $0
+        // debit/credit -- every line must carry exactly one nonzero
+        // side (validateItemAmounts()), so handleTax() rejects this
+        // case directly instead of producing a degenerate 0/0 line that
+        // would otherwise fail later with a confusing generic message.
+        Tax tax = taxFixture(creditAccount, "19", "C", true, "500000");
+        when(taxRepository.findByCompanyIdAndAccount(COMPANY_ID, creditAccount)).thenReturn(Optional.of(tax));
+
+        JournalEntryRequest request = balancedRequest(LocalDate.now());
+        request.getItems().get(1).setTaxBase(new BigDecimal("100000"));
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(InvalidOperationException.class)
+                .hasMessageContaining("below")
+                .hasMessageContaining("minimum");
+    }
+
+    @Test
+    @DisplayName("create() rejects an inactive Tax linked to the account")
+    void create_taxLinkedAccount_inactiveTax_throws() {
+        Tax tax = taxFixture(creditAccount, "19", "C", true, null);
+        tax.setActive(false);
+        when(taxRepository.findByCompanyIdAndAccount(COMPANY_ID, creditAccount)).thenReturn(Optional.of(tax));
+
+        JournalEntryRequest request = balancedRequest(LocalDate.now());
+        request.getItems().get(1).setTaxBase(new BigDecimal("1000000"));
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOf(InvalidOperationException.class)
+                .hasMessageContaining("inactive");
+    }
+
+    @Test
+    @DisplayName("create() leaves a non-tax-linked account's debit/credit exactly as submitted")
+    void create_accountNotTaxLinked_leavesAmountsUnchanged() {
+        when(taxRepository.findByCompanyIdAndAccount(COMPANY_ID, creditAccount)).thenReturn(Optional.empty());
+
+        JournalEntryResponseDTO result = service.create(balancedRequest(LocalDate.now()));
+
+        assertThat(result.getItems().get(1).getCredit()).isEqualByComparingTo("100.00");
+        assertThat(result.getItems().get(1).getTaxId()).isNull();
     }
 
     // ============================================================

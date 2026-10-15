@@ -43,6 +43,14 @@ public class JournalEntryRequest {
 
         @Size(max = 255)
         private String description;
+
+        // NEW (2026-10-14, user request): base gravable for a line whose
+        // account is parameterized with a Tax -- see
+        // JournalEntryService.handleTax(). Optional: only read when the
+        // account actually has a configured Tax; ignored otherwise, same
+        // opt-in pattern as thirdPartyId/costCenterId above.
+        @DecimalMin(value = "0.0", inclusive = true)
+        private BigDecimal taxBase;
     }
     @Data
     public static class AnnulmentRequest {
