@@ -89,6 +89,18 @@ public class AuxiliaryLedgerTransaction {
      */
     private String accountName;
 
+    /**
+     * NEW (2026-10-16, user request): true when this line belongs to a
+     * journal entry that was annulled (JournalEntry.annulled) -- annul()
+     * neutralizes the entry's financial effect by zeroing debit/credit
+     * (so the running balance already reflects it correctly), but gave
+     * no visual signal in this report that a zero-amount row corresponds
+     * to an annulled voucher rather than, say, a data entry mistake.
+     * Found by the user testing annulment of IM-4: the row showed up
+     * with blank debit/credit and no indication why.
+     */
+    private boolean annulled;
+
     // ═══════════════════════════════════════════════════════════
     // HELPER METHODS
     // ═══════════════════════════════════════════════════════════

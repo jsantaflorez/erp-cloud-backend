@@ -4,6 +4,7 @@ import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.JournalEntry;
 import com.erp.erp_cloud.entity.JournalEntryItem;
 import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.enums.TaxCategory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -495,6 +496,80 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             @Param("companyId") Long companyId,
             @Param("cutoffDate") LocalDate cutoffDate,
             @Param("closesAtYearEnd") boolean closesAtYearEnd
+    );
+
+    // ═══════════════════════════════════════════════════════════
+    // TAX DETAIL REPORT -- "Informe Detallado de Impuestos y
+    // Retenciones" (2026-10-16, replaces the earlier Retention-only
+    // report built the same day: the user asked to unify IVA,
+    // Retenciones, Impoconsumo and any future tax into ONE report
+    // instead of one screen per category, so this covers every
+    // category -- category itself becomes an OPTIONAL filter instead
+    // of being hardcoded to RETENCION)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Lines for the "Informe Detallado de Impuestos y Retenciones":
+     * every tax-linked journal entry item, within a date range,
+     * optionally narrowed to one Tax category (RETENCION/IVA/OTRO --
+     * null means all three), one specific tax type (tx.type, free
+     * text, e.g. "RETEFUENTE" or "IVA_GENERADO") and/or one third
+     * party. Same COALESCE-self pattern already used elsewhere in this
+     * repository for an optional equality filter (see
+     * findItemsForThirdPartyAuxiliaryByCostCenter's cost center filter)
+     * instead of a null-guarded OR, which silently excludes everything
+     * when the parameter is reused and null (documented bug fixed
+     * 2026-09-24 in getCostCenterOpeningBalances/findItemsForCostCenterAuxiliary)
+     * -- category uses the same COALESCE-self trick as the string
+     * filters below it, now that it's optional too.
+     *
+     * Annulled entries are excluded outright (e.active = true, e.annulled
+     * = false) -- a neutralized voucher never represented a real tax
+     * event for declaration purposes; annul() zeroes debit/credit but
+     * leaves tax/taxBase untouched (see JournalEntryItem's javadoc), so
+     * without this filter a zeroed line would still show up here with a
+     * confusing "Valor Impuesto: 0" row.
+     *
+     * Third party is a LEFT JOIN here (unlike the single-category
+     * Retention report this replaces, which used an INNER JOIN because
+     * a retention line with no third party can't be certified to
+     * anyone): IVA and OTRO lines can legitimately have no third party
+     * attached, so excluding them outright would silently drop valid
+     * rows from a general-purpose report. A line with no third party
+     * simply shows blank NIT/Nombre -- the frontend already has the
+     * "—" fallback convention other reports use for this.
+     *
+     * BUG AVOIDED: the COALESCE-self trick used for category/taxType
+     * above only works because tx is an INNER JOIN (tx.category and
+     * tx.type can never be SQL NULL on a matched row). tp is a LEFT
+     * JOIN, so tp.documentNumber CAN be null on a matched row (no third
+     * party) -- "tp.documentNumber = COALESCE(:thirdPartyDocument,
+     * tp.documentNumber)" would reduce to "NULL = NULL" there, which is
+     * neither true nor false in SQL, silently dropping every line with
+     * no third party even when no filter was requested. The explicit
+     * "filter IS NULL OR equals" form below has no such trap.
+     */
+    @Query("""
+        SELECT i FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.tax tx
+        LEFT JOIN i.thirdParty tp
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND e.annulled = false
+          AND tx.category = COALESCE(:category, tx.category)
+          AND e.entryDate BETWEEN :startDate AND :endDate
+          AND tx.type = COALESCE(:taxType, tx.type)
+          AND (:thirdPartyDocument IS NULL OR tp.documentNumber = :thirdPartyDocument)
+        ORDER BY e.entryDate ASC, e.id ASC, i.id ASC
+    """)
+    List<JournalEntryItem> findTaxItems(
+            @Param("companyId") Long companyId,
+            @Param("category") TaxCategory category,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("taxType") String taxType,
+            @Param("thirdPartyDocument") String thirdPartyDocument
     );
 
     // ═══════════════════════════════════════════════════════════

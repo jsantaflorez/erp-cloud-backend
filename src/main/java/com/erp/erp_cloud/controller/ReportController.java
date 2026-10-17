@@ -2,10 +2,12 @@ package com.erp.erp_cloud.controller;
 
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.reports.financial.*;
+import com.erp.erp_cloud.enums.TaxCategory;
 import com.erp.erp_cloud.service.reports.financial.AuxiliaryLedgerService;
 import com.erp.erp_cloud.service.reports.financial.CostCenterReportService;
 import com.erp.erp_cloud.service.reports.financial.ThirdPartyReportService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
+import com.erp.erp_cloud.service.reports.financial.TaxDetailReportService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +29,7 @@ public class ReportController {
     private final AuxiliaryLedgerService auxiliaryLedgerService;
     private final CostCenterReportService costCenterReportService;
     private final ThirdPartyReportService thirdPartyReportService;
+    private final TaxDetailReportService taxDetailReportService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -321,6 +324,64 @@ public class ReportController {
         String message = String.format(
                 "Estado de Resultados generado del %s al %s. %s.",
                 startDate, endDate, data.getResultLabelEs());
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // TAX DETAIL REPORT -- "Informe Detallado de Impuestos y
+    // Retenciones" (2026-10-16, unifies what would otherwise be one
+    // report per Tax category -- IVA, Retenciones, Impoconsumo and any
+    // future custom tax all go through this single endpoint, with
+    // category as an optional filter instead of a hardcoded one)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Generates the "Informe Detallado de Impuestos y Retenciones": a
+     * flat, chronological list of every tax-linked journal entry line
+     * within a date range, optionally narrowed to one Tax category
+     * (RETENCION/IVA/OTRO -- omitted means all three), one specific tax
+     * type (e.g. "RETEFUENTE", "IVA_GENERADO", "IMPOCONSUMO") and/or one
+     * third party, with subtotals per type and grand totals -- used to
+     * liquidate monthly/period tax declarations (IVA, retenciones, or
+     * any other tax) and validate bases before issuing certificates.
+     *
+     * @param startDate          Start of the reporting period (required)
+     * @param endDate            End of the reporting period (required)
+     * @param category           Optional: RETENCION, IVA or OTRO -- omitted means all
+     * @param taxType            Optional: one specific tax type (e.g. "RETEFUENTE")
+     * @param thirdPartyDocument Optional: one specific third party by document number
+     *
+     * Example URL:
+     * - GET /api/v1/reports/tax-detail?startDate=2026-01-01&endDate=2026-01-31&category=RETENCION
+     */
+    @GetMapping("/tax-detail")
+    @Operation(summary = "Generate Tax Detail Report (Informe Detallado de Impuestos y Retenciones)", description = "Shows every tax-linked journal entry line (IVA, Retenciones, Impoconsumo or any other category) for a date range, optionally restricted to one category, one tax type and/or one third party, with subtotals per type.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Tax detail report generated successfully")
+    public ResponseEntity<ApiResponse<TaxDetailReport>> getTaxDetail(
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate,
+
+            @RequestParam(required = false)
+            TaxCategory category,
+
+            @RequestParam(required = false)
+            String taxType,
+
+            @RequestParam(required = false)
+            String thirdPartyDocument) {
+
+        TaxDetailReport data =
+                taxDetailReportService.getTaxDetailReport(startDate, endDate, category, taxType, thirdPartyDocument);
+
+        String message = String.format(
+                "Tax detail report generated successfully from %s to %s. %d record(s).",
+                startDate, endDate, data.getTotalRecords());
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
     }

@@ -301,9 +301,18 @@ public class JournalEntryService extends TenantAwareService {
         }
 
         // 5. AUDIT LOGGING
+        // BUG FIX: description is an optional column (nullable) -- a
+        // journal entry created without one has getDescription() == null,
+        // and the original code called .startsWith() on it unconditionally,
+        // throwing a NullPointerException on every annulment attempt for
+        // any entry that happened to have no description (found testing
+        // annulment of IM-4, document type IMK, which had none).
         String prefix = "[ANNULLED] ";
-        if (!entry.getDescription().startsWith(prefix)) {
-            entry.setDescription(prefix + entry.getDescription());
+        String currentDescription = entry.getDescription();
+        if (currentDescription == null) {
+            entry.setDescription(prefix.trim());
+        } else if (!currentDescription.startsWith(prefix)) {
+            entry.setDescription(prefix + currentDescription);
         }
 
         JournalEntry savedEntry = repository.save(entry);

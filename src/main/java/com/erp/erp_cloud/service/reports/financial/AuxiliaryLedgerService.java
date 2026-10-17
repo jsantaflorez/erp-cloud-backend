@@ -189,6 +189,7 @@ public class AuxiliaryLedgerService extends TenantAwareService {
                     .costCenterCode(item.getCostCenter() != null
                             ? item.getCostCenter().getCode()
                             : null)
+                    .annulled(item.getJournalEntry().isAnnulled())
                     .build());
         }
 
