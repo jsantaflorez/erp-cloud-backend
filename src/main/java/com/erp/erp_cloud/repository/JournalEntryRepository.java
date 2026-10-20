@@ -573,6 +573,56 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     );
 
     // ═══════════════════════════════════════════════════════════
+    // INCOMPLETE MOVEMENTS AUDIT -- "Informe de Movimientos
+    // Incompletos" (2026-10-20, user request): finds lines left
+    // "orphaned" after an account's requiresThirdParty/requiresCostCenter
+    // flag was turned on AFTER the line was already posted (common
+    // real-world sequence: account created loosely, movements typed,
+    // accountant tightens it later) -- those older lines keep whatever
+    // they had at posting time (possibly null), which the account's
+    // CURRENT flags say they should no longer be allowed to have. This
+    // audits against the account's CURRENT configuration, not whatever
+    // it was when each line was posted, which is exactly the point: it
+    // surfaces every line that would be rejected if re-saved today.
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Finds every journal entry line whose CURRENT account configuration
+     * requires a Third Party and/or a Cost Center that the line itself
+     * doesn't have -- i.e. it was posted before the account was
+     * tightened, or the requirement was never enforced at posting time.
+     * Annulled entries are excluded (a neutralized voucher has no real
+     * accounting effect, so an inconsistency on it is moot) via the
+     * same e.active = true / e.annulled = false pair every other report
+     * here uses. Date range is OPTIONAL and unbounded by default -- this
+     * is a cleanup/audit tool meant to surface every historical orphan,
+     * not a period report -- using the explicit "param IS NULL OR ..."
+     * form (not COALESCE) since e.entryDate is never itself null, so
+     * there's no COALESCE-vs-null trap to avoid here, just the usual
+     * optional-parameter pattern.
+     */
+    @Query("""
+        SELECT i FROM JournalEntry e
+        JOIN e.items i
+        JOIN i.account a
+        WHERE e.company.id = :companyId
+          AND e.active = true
+          AND e.annulled = false
+          AND (:startDate IS NULL OR e.entryDate >= :startDate)
+          AND (:endDate IS NULL OR e.entryDate <= :endDate)
+          AND (
+            (a.requiresThirdParty = true AND i.thirdParty IS NULL)
+            OR (a.requiresCostCenter = true AND i.costCenter IS NULL)
+          )
+        ORDER BY e.entryDate ASC, e.id ASC, i.id ASC
+    """)
+    List<JournalEntryItem> findIncompleteMovementItems(
+            @Param("companyId") Long companyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
+
+    // ═══════════════════════════════════════════════════════════
     // LEGACY METHODS (Object-based for backward compatibility)
     // ═══════════════════════════════════════════════════════════
 

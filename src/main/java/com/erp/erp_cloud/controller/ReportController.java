@@ -8,6 +8,7 @@ import com.erp.erp_cloud.service.reports.financial.CostCenterReportService;
 import com.erp.erp_cloud.service.reports.financial.ThirdPartyReportService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.reports.financial.TaxDetailReportService;
+import com.erp.erp_cloud.service.reports.financial.IncompleteMovementsReportService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,6 +31,7 @@ public class ReportController {
     private final CostCenterReportService costCenterReportService;
     private final ThirdPartyReportService thirdPartyReportService;
     private final TaxDetailReportService taxDetailReportService;
+    private final IncompleteMovementsReportService incompleteMovementsReportService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -382,6 +384,44 @@ public class ReportController {
         String message = String.format(
                 "Tax detail report generated successfully from %s to %s. %d record(s).",
                 startDate, endDate, data.getTotalRecords());
+
+        return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // INCOMPLETE MOVEMENTS AUDIT -- "Informe de Movimientos
+    // Incompletos" (2026-10-20, user request)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Generates the "Informe de Movimientos Incompletos": every journal
+     * entry line whose account CURRENTLY requires a Third Party and/or
+     * a Cost Center that the line itself doesn't have -- almost always
+     * because the account's requirements were tightened after the line
+     * was already posted. Date range is OPTIONAL (omitted means the
+     * whole history) -- see IncompleteMovementsReportService's javadoc.
+     *
+     * Example URLs:
+     * - GET /api/v1/reports/incomplete-movements (whole history)
+     * - GET /api/v1/reports/incomplete-movements?startDate=2026-01-01&endDate=2026-12-31
+     */
+    @GetMapping("/incomplete-movements")
+    @Operation(summary = "Generate Incomplete Movements audit (Informe de Movimientos Incompletos)", description = "Lists journal entry lines whose account currently requires a Third Party and/or Cost Center the line doesn't have, optionally restricted to a date range.")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Incomplete movements report generated successfully")
+    public ResponseEntity<ApiResponse<IncompleteMovementsReport>> getIncompleteMovements(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate startDate,
+
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate endDate) {
+
+        IncompleteMovementsReport data = incompleteMovementsReportService.getIncompleteMovementsReport(startDate, endDate);
+
+        String message = String.format(
+                "Incomplete movements report generated successfully. %d record(s) found.",
+                data.getTotalRecords());
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
     }
