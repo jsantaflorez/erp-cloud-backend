@@ -605,10 +605,21 @@ public class JournalEntryService extends TenantAwareService {
 
     public JournalEntryResponseDTO findById(Long id) {
         Long companyId = currentTenantId();
-        return repository.findById(id)
-                .filter(entry -> entry.getCompany().getId().equals(companyId))
-                .map(this::mapToResponseDTO)
+        JournalEntry entry = repository.findById(id)
+                .filter(e -> e.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
+        JournalEntryResponseDTO dto = mapToResponseDTO(entry);
+        // NEW (2026-10-22, user-reported UX issue): the frontend needs to
+        // know up front whether this entry's period is closed, so it can
+        // open the form read-only instead of letting the user type a full
+        // edit that only fails -- with everything typed lost -- once they
+        // click Guardar and hit accountingPeriodService.validateDateIsOpen()'s
+        // rejection. Scoped to this single-entry fetch only; the shared
+        // mapToResponseDTO() used by listEntries() is left untouched so the
+        // list screen doesn't pay an extra isPeriodClosed() query per row.
+        LocalDate entryDate = entry.getEntryDate();
+        dto.setPeriodClosed(accountingPeriodService.isPeriodClosed(entryDate.getYear(), entryDate.getMonthValue()));
+        return dto;
     }
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE REPORTS

@@ -15,6 +15,14 @@ public class JournalEntryResponseDTO {
     private boolean annulled;
     private java.time.LocalDateTime annulledAt;
     private String annulmentReason;
+    // NEW (2026-10-22, user-reported UX issue): populated only by
+    // JournalEntryService.findById() -- not by the shared mapToResponseDTO
+    // path used for list/create/update/annul, to avoid an extra
+    // isPeriodClosed() query per row on the list screen. Lets the
+    // frontend open the edit form read-only instead of letting the user
+    // type a full edit that only fails -- with everything typed lost --
+    // once they click Guardar and hit validateDateIsOpen()'s rejection.
+    private boolean periodClosed;
     private List<ItemResponse> items;
 
     @Data
