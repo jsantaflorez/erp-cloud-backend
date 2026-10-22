@@ -59,4 +59,18 @@ public class JournalEntryRequest {
         private String reason;
     }
 
+    // NEW (2026-10-22, user request): "Duplicar Comprobante" -- copies an
+    // existing entry's document type/description/items wholesale onto a
+    // brand-new entry at a date the user picks (useful for repetitive
+    // entries like nomina/arriendo/depreciacion). Deliberately just the
+    // one field -- JournalEntryService.duplicate() builds a full
+    // JournalEntryRequest from the source entry and delegates to create(),
+    // so the new date gets the exact same validateDateIsOpen()/balance/
+    // closing-doc-type checks a hand-typed entry would.
+    @Data
+    public static class DuplicateRequest {
+        @NotNull(message = "Entry date is required")
+        private LocalDate entryDate;
+    }
+
 }

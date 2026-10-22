@@ -322,6 +322,68 @@ public class JournalEntryService extends TenantAwareService {
     }
 
     /**
+     * Duplicates an existing journal entry onto a brand-new one at a
+     * caller-chosen date.
+     *
+     * NEW (2026-10-22, user request): useful for repetitive entries
+     * (nomina, arriendo, depreciacion) instead of retyping the same
+     * lines every period. Deliberately does NOT reimplement any
+     * validation itself -- it builds a JournalEntryRequest from the
+     * source entry's current document type/description/items and
+     * delegates straight to create(), so the duplicate is subject to
+     * every rule a hand-typed entry would be: the new date must be in
+     * an open period (accountingPeriodService.validateDateIsOpen(),
+     * via create()), the entry must balance, and CIERRE can't be used
+     * (validateAndGetDocumentType() already rejects it for ANY
+     * create(), so a closing entry's documentTypeId gets refused here
+     * for free, with no separate check needed).
+     */
+    @Transactional
+    public JournalEntryResponseDTO duplicate(Long id, JournalEntryRequest.DuplicateRequest duplicateRequest) {
+        Long companyId = currentTenantId();
+
+        JournalEntry source = repository.findById(id)
+                .filter(e -> e.getCompany().getId().equals(companyId))
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
+
+        // An annulled entry's items were zeroed out by annul() above --
+        // duplicating it would either produce a useless all-zero entry or
+        // fail outright against the "each line needs a debit or credit"
+        // rule in processLineItems(), with a confusing error. Blocked here
+        // with a clear message instead.
+        if (source.isAnnulled()) {
+            throw new InvalidOperationException(
+                    "An annulled journal entry cannot be duplicated.", "CANNOT_DUPLICATE_ANNULLED_ENTRY");
+        }
+
+        JournalEntryRequest request = new JournalEntryRequest();
+        request.setEntryDate(duplicateRequest.getEntryDate());
+        request.setDocumentTypeId(source.getDocumentType().getId());
+        request.setDescription(source.getDescription());
+        request.setItems(source.getItems().stream().map(item -> {
+            JournalEntryRequest.ItemRequest itemRequest = new JournalEntryRequest.ItemRequest();
+            itemRequest.setAccountId(item.getAccount().getId());
+            itemRequest.setThirdPartyId(item.getThirdParty() != null ? item.getThirdParty().getId() : null);
+            itemRequest.setCostCenterId(item.getCostCenter() != null ? item.getCostCenter().getId() : null);
+            itemRequest.setDebit(item.getDebit() != null ? item.getDebit() : BigDecimal.ZERO);
+            itemRequest.setCredit(item.getCredit() != null ? item.getCredit() : BigDecimal.ZERO);
+            itemRequest.setDescription(item.getDescription());
+            // handleTax() recomputes debit/credit from this base against
+            // the account's CURRENT tax rate during create() below -- if
+            // the rate changed since the source entry was posted, the
+            // duplicate intentionally reflects today's rate, not the
+            // stale one the source was created under.
+            itemRequest.setTaxBase(item.getTaxBase());
+            return itemRequest;
+        }).toList());
+
+        log.info("Duplicating journal entry {} (ID: {}) onto {}",
+                source.getDocumentNumber(), id, duplicateRequest.getEntryDate());
+
+        return create(request);
+    }
+
+    /**
      * Updates an existing journal entry.
      */
     @Transactional

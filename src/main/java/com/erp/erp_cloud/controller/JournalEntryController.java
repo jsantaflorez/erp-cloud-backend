@@ -329,6 +329,43 @@ public class JournalEntryController {
         ));
     }
 
+    /**
+     * Duplicates a journal entry onto a brand-new one at a caller-chosen
+     * date -- useful for repetitive entries (nomina, arriendo,
+     * depreciacion) instead of retyping the same lines every period.
+     */
+    @PostMapping("/{id}/duplicate")
+    @Operation(
+            summary = "Duplicate journal entry",
+            description = "Copies an existing entry's document type, description and items onto a " +
+                    "brand-new entry at the given date. Subject to the same validation as a hand-typed " +
+                    "entry: the new date must fall in an open accounting period, the entry must balance, " +
+                    "and a year-end closing entry cannot be duplicated. An annulled entry cannot be duplicated."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "201",
+            description = "Journal entry duplicated successfully"
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+            responseCode = "400",
+            description = "Validation error: new date falls in a closed period, source is annulled, " +
+                    "or source is a closing entry"
+    )
+    public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> duplicate(
+            @PathVariable Long id,
+            @Valid @RequestBody JournalEntryRequest.DuplicateRequest request) {
+
+        JournalEntryResponseDTO duplicated = service.duplicate(id, request);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(new ApiResponse<>(
+                        "Journal entry duplicated successfully: " + duplicated.getDocumentNumber(),
+                        true,
+                        duplicated
+                ));
+    }
+
 
 
 }
