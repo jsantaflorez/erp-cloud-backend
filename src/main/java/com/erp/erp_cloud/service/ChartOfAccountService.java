@@ -162,6 +162,36 @@ public class ChartOfAccountService extends TenantAwareService {
             }
         }
 
+        // BUSINESS RULE (2026-10-23, user-reported): same reasoning as the
+        // posting-account guard just above, applied to the two "requires"
+        // flags. Once journal entry lines exist against this account,
+        // turning OFF a requirement it already enforced would silently
+        // loosen a rule that data was captured under, and is exactly the
+        // kind of after-the-fact alteration ChartOfAccountService already
+        // refuses for postingAccount. Turning a requirement ON with
+        // existing movements is deliberately still allowed (that's the
+        // normal "the accountant tightened the account later" case the
+        // Informe de Movimientos Incompletos report exists to surface and
+        // let the user fix one entry at a time) -- only removal is
+        // blocked here.
+        if (Boolean.FALSE.equals(request.getRequiresThirdParty()) && existing.isRequiresThirdParty()) {
+            if (repository.existsByCompanyIdAndAccount(currentTenantId(), existing)) {
+                throw new InvalidOperationException(
+                        "Cannot remove the Third Party requirement — this account already has journal entry movements.",
+                        "REQUIRES_THIRD_PARTY_HAS_MOVEMENTS"
+                );
+            }
+        }
+
+        if (Boolean.FALSE.equals(request.getRequiresCostCenter()) && existing.isRequiresCostCenter()) {
+            if (repository.existsByCompanyIdAndAccount(currentTenantId(), existing)) {
+                throw new InvalidOperationException(
+                        "Cannot remove the Cost Center requirement — this account already has journal entry movements.",
+                        "REQUIRES_COST_CENTER_HAS_MOVEMENTS"
+                );
+            }
+        }
+
         // INTENTIONAL: Account class changes are allowed even with existing transactions.
         // Rationale: Accountants may reclassify accounts retroactively for reporting purposes.
         // Historical transactions are preserved; only future reporting is affected.
