@@ -9,6 +9,14 @@ import java.util.List;
 public class JournalEntryResponseDTO {
     private Long id;
     private String documentNumber;
+    // NEW (2026-10-24, user request): the voucher's own numeric sequence
+    // (JournalEntry.consecutive), exposed alongside documentNumber (which
+    // is just "prefix + '-' + consecutive", see
+    // JournalEntryService.generateDocNumber()) so a report that needs to
+    // find the lowest/highest consecutive USED per document type in a
+    // period (e.g. "Consolidado por Tipo de Comprobante") can compare
+    // numbers directly instead of string-parsing documentNumber.
+    private Long consecutive;
     private Long documentTypeId;
     private LocalDate entryDate;
     private String description;

@@ -980,6 +980,7 @@ public class JournalEntryService extends TenantAwareService {
         JournalEntryResponseDTO dto = new JournalEntryResponseDTO();
         dto.setId(entry.getId());
         dto.setDocumentNumber(entry.getDocumentNumber());
+        dto.setConsecutive(entry.getConsecutive());
         dto.setDocumentTypeId(entry.getDocumentType().getId());
         dto.setEntryDate(entry.getEntryDate());
         dto.setDescription(entry.getDescription());
