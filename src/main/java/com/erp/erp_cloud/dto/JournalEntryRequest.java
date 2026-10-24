@@ -71,6 +71,17 @@ public class JournalEntryRequest {
     public static class DuplicateRequest {
         @NotNull(message = "Entry date is required")
         private LocalDate entryDate;
+
+        // NEW (2026-10-24, user request): optional override for the
+        // description shown/editable in the "Duplicar Comprobante" modal.
+        // When present, JournalEntryService.duplicate() uses it for BOTH
+        // the new entry's header description AND every line's own
+        // description -- replacing whatever each source line had, so the
+        // whole voucher carries one consistent note. Left null (e.g. an
+        // older client, or any other future caller of this endpoint)
+        // preserves the original behavior: header and each line keep
+        // their own description exactly as copied from the source entry.
+        private String description;
     }
 
 }

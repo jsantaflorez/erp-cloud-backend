@@ -356,10 +356,20 @@ public class JournalEntryService extends TenantAwareService {
                     "An annulled journal entry cannot be duplicated.", "CANNOT_DUPLICATE_ANNULLED_ENTRY");
         }
 
+        // NEW (2026-10-24, user request): the "Duplicar Comprobante" modal
+        // now shows the source entry's description, editable, instead of
+        // silently carrying it forward -- and whatever the user confirms
+        // (accepted as-is, or changed) becomes BOTH the new entry's header
+        // description AND every line's own description, replacing each
+        // line's original note. A null override (any caller that doesn't
+        // send one) falls back to the original behavior: header AND each
+        // line keep exactly what the source entry had.
+        String overrideDescription = duplicateRequest.getDescription();
+
         JournalEntryRequest request = new JournalEntryRequest();
         request.setEntryDate(duplicateRequest.getEntryDate());
         request.setDocumentTypeId(source.getDocumentType().getId());
-        request.setDescription(source.getDescription());
+        request.setDescription(overrideDescription != null ? overrideDescription : source.getDescription());
         request.setItems(source.getItems().stream().map(item -> {
             JournalEntryRequest.ItemRequest itemRequest = new JournalEntryRequest.ItemRequest();
             itemRequest.setAccountId(item.getAccount().getId());
@@ -367,7 +377,7 @@ public class JournalEntryService extends TenantAwareService {
             itemRequest.setCostCenterId(item.getCostCenter() != null ? item.getCostCenter().getId() : null);
             itemRequest.setDebit(item.getDebit() != null ? item.getDebit() : BigDecimal.ZERO);
             itemRequest.setCredit(item.getCredit() != null ? item.getCredit() : BigDecimal.ZERO);
-            itemRequest.setDescription(item.getDescription());
+            itemRequest.setDescription(overrideDescription != null ? overrideDescription : item.getDescription());
             // handleTax() recomputes debit/credit from this base against
             // the account's CURRENT tax rate during create() below -- if
             // the rate changed since the source entry was posted, the
