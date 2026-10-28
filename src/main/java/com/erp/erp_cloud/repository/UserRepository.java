@@ -1,11 +1,13 @@
 package com.erp.erp_cloud.repository;
 
+import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -47,4 +49,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Set<String> findPermissionCodesByEmailAndCompanyId(
             @Param("email") String email,
             @Param("companyId") Long companyId);
+
+    /**
+     * NEW (2026-10-26, Multiempresa Fase 1): companies the user can
+     * actively switch into -- every company where the user holds at
+     * least one UserRole, restricted to active companies only (an
+     * inactive/suspended tenant should not appear as a switch target
+     * even if a stale UserRole row still references it). Used by
+     * GET /api/v1/session/companies to populate the AppHeader dropdown.
+     */
+    @Query("SELECT DISTINCT ur.company FROM UserRole ur " +
+            "WHERE ur.user.email = :email " +
+            "AND ur.company.active = true " +
+            "ORDER BY ur.company.legalName")
+    List<Company> findAccessibleCompaniesByEmail(@Param("email") String email);
 }

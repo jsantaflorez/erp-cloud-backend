@@ -6,7 +6,6 @@ import com.erp.erp_cloud.dto.auth.LoginRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -42,30 +41,12 @@ public class AuthController {
                 loginRequest.companyId(),
                 loginRequest.email().hashCode());
 
-        // Combines email and companyId into a unified principal string —
+        // Combines email and companyId into a unified principal string --
         // CustomUserDetailsService splits this to enforce tenant isolation
         String unifiedPrincipal = loginRequest.email() + "|" + loginRequest.companyId();
 
-        // =========================================================================
-// TEMPORAL DEBUG: Let's see exactly what text and encoder are processing
-// =========================================================================
-        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
-        String rawPasswordSent = loginRequest.password();
-        String dbHashMock = "$2a$10$dXJ3wXg77BW7697dy.T6rO7G6jYh4eZByyE0W.oVw.K.3t07S7IqW";
-
-        log.info("====== SECURITY VERIFICATION ======");
-        log.info("Raw Password from Swagger: [{}]", rawPasswordSent);
-        log.info("Length of raw password: {}", rawPasswordSent.length());
-        log.info("Manual BCrypt match check: {}", encoder.matches(rawPasswordSent, dbHashMock));
-        log.info("NUEVO HASH PARA COPIAR: {}", encoder.encode("Password123!"));
-        log.info("===================================");
-
-
-
-
-
         // Delegates full credential verification to the configured AuthenticationProvider chain.
-        // On failure, BadCredentialsException propagates to GlobalExceptionHandler → 401 JSON response.
+        // On failure, BadCredentialsException propagates to GlobalExceptionHandler -> 401 JSON response.
         Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(unifiedPrincipal, loginRequest.password())
         );
@@ -76,7 +57,7 @@ public class AuthController {
         // Generates the signed JWT token from the verified authentication context
         String jwt = tokenProvider.generateToken(authentication);
 
-        // Extracts only high-level role names for frontend rendering constraints —
+        // Extracts only high-level role names for frontend rendering constraints --
         // strips the internal ROLE_ framework prefix before sending to the client
         Set<String> roles = userPrincipal.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
@@ -107,6 +88,5 @@ public class AuthController {
                 ApiResponse.success("Authentication successful.", authResponse)
         );
     }
-
 
 }
