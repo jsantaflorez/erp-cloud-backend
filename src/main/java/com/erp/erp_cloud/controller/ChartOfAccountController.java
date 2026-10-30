@@ -6,6 +6,7 @@ import com.erp.erp_cloud.dto.*;
 import com.erp.erp_cloud.enums.AccountCategory;
 import com.erp.erp_cloud.enums.AccountClass;
 import com.erp.erp_cloud.enums.FinancialStatement;
+import com.erp.erp_cloud.service.ChartAccountTemplateImportService;
 import com.erp.erp_cloud.service.ChartOfAccountService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +32,7 @@ import java.util.List;
 public class ChartOfAccountController {
 
     private final ChartOfAccountService chartOfAccountService;
+    private final ChartAccountTemplateImportService chartAccountTemplateImportService;
 
     /**
      * Create a new account entry.
@@ -46,6 +48,28 @@ public class ChartOfAccountController {
         ChartOfAccountResponseDTO created = chartOfAccountService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ApiResponse<>("Account created successfully", true, created));
+    }
+
+    /**
+     * Fase 4 (Multiempresa) -- clones the standard reference PUC
+     * (ChartAccountTemplateEntry, COMERCIAL or SOLIDARIO) into real
+     * ChartOfAccounts rows for the current tenant. Only allowed while the
+     * Plan de Cuentas is completely empty -- see
+     * ChartAccountTemplateImportService for the full design/assumptions.
+     */
+    @PostMapping("/import-template")
+    @Operation(
+            summary = "Import the standard reference PUC as real accounts",
+            description = "Clones every ChartAccountTemplateEntry row (COMERCIAL or SOLIDARIO) into " +
+                    "ChartOfAccounts for the current tenant, respecting the existing hierarchy rules. " +
+                    "Only available while the Plan de Cuentas is empty."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Template imported successfully")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "No template selected, template mismatch, or Plan de Cuentas not empty")
+    public ResponseEntity<ApiResponse<ChartTemplateImportResultDTO>> importTemplate(
+            @RequestBody(required = false) ImportChartTemplateRequest request) {
+        ChartTemplateImportResultDTO result = chartAccountTemplateImportService.importTemplate(request);
+        return ResponseEntity.ok(new ApiResponse<>("Template imported successfully", true, result));
     }
 
     /**

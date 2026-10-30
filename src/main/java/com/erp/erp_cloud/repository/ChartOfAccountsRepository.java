@@ -28,6 +28,12 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
 
     boolean existsByCompanyIdAndCode(Long companyId, String code);
 
+    // NEW (Fase 4, Importar PUC Estandar): lets the import feature refuse
+    // to run on a company that already has any account at all -- the
+    // button is only offered from an empty Plan de Cuentas (see
+    // ChartAccountTemplateImportService).
+    boolean existsByCompanyId(Long companyId);
+
     /**
      * Chart of accounts hierarchy
      */
