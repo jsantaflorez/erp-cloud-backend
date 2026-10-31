@@ -33,6 +33,7 @@ public class ChartOfAccountController {
 
     private final ChartOfAccountService chartOfAccountService;
     private final ChartAccountTemplateImportService chartAccountTemplateImportService;
+    private final com.erp.erp_cloud.service.SiewinPucImportService siewinPucImportService;
 
     /**
      * Create a new account entry.
@@ -70,6 +71,31 @@ public class ChartOfAccountController {
             @RequestBody(required = false) ImportChartTemplateRequest request) {
         ChartTemplateImportResultDTO result = chartAccountTemplateImportService.importTemplate(request);
         return ResponseEntity.ok(new ApiResponse<>("Template imported successfully", true, result));
+    }
+
+    /**
+     * Legacy-PUC migration from a client's SIEWIN export (t_puc_maestro26).
+     * Unrelated to importTemplate() above -- this is a one-off migration
+     * utility for a client whose own numbering doesn't match either
+     * reference template, not a 3rd ChartTemplateType. The frontend parses
+     * the uploaded .xlsx/.csv client-side and sends the parsed rows here
+     * as plain JSON -- see SiewinPucImportService for the full digit-jump
+     * re-derivation, validation and category/nature resolution rules.
+     */
+    @PostMapping("/import-siewin")
+    @Operation(
+            summary = "Import a legacy PUC exported from SIEWIN",
+            description = "Re-derives account codes from a SIEWIN t_puc_maestro26 export (parsed client-side) " +
+                    "and creates real ChartOfAccounts rows for the current tenant. Only available while the " +
+                    "Plan de Cuentas is empty; fails with every validation problem collected at once if the " +
+                    "source data has any gap, duplicate, orphan or unmapped group."
+    )
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "SIEWIN PUC imported successfully")
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Plan de Cuentas not empty, empty file, or source data integrity problems")
+    public ResponseEntity<ApiResponse<com.erp.erp_cloud.dto.SiewinPucImportResultDTO>> importSiewin(
+            @RequestBody com.erp.erp_cloud.dto.SiewinPucImportRequest request) {
+        com.erp.erp_cloud.dto.SiewinPucImportResultDTO result = siewinPucImportService.importFromSiewin(request);
+        return ResponseEntity.ok(new ApiResponse<>("SIEWIN PUC imported successfully", true, result));
     }
 
     /**
