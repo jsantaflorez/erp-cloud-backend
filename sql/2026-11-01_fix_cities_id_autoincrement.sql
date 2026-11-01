@@ -1,41 +1,40 @@
--- 2026-11-01 -- Corrige cities.id: le falta AUTO_INCREMENT.
+-- 2026-11-01 -- Fixes cities.id: it is missing AUTO_INCREMENT.
 --
--- Encontrado al correr sql/2026-10-31_populate_cities_municipios.sql:
--- "Error de SQL (1364): Field 'id' doesn't have a default value". La
--- entidad City.java espera @GeneratedValue(strategy = GenerationType.IDENTITY)
--- (i.e. AUTO_INCREMENT), pero la tabla real -- confirmado via
--- SHOW CREATE TABLE cities -- tiene `id BIGINT NOT NULL` sin
--- AUTO_INCREMENT. No es un problema del script de municipios: es un
--- defecto de esquema preexistente que nadie habia notado porque las
--- pocas filas de `cities` que ya existian se insertaron a mano con un
--- id explicito.
+-- Found while running sql/2026-10-31_populate_cities_municipios.sql:
+-- "SQL Error (1364): Field 'id' doesn't have a default value". The
+-- City.java entity expects @GeneratedValue(strategy = GenerationType.IDENTITY)
+-- (i.e. AUTO_INCREMENT), but the real table -- confirmed via
+-- SHOW CREATE TABLE cities -- has `id BIGINT NOT NULL` with no
+-- AUTO_INCREMENT. Not a problem with the municipios script itself: it is
+-- a pre-existing schema defect nobody had noticed because the few rows
+-- `cities` already had were inserted by hand with an explicit id.
 --
--- Nota aparte (no bloqueante, no se toca aqui): el UNIQUE real es
--- `uk_cities_country_code` (country_id, code), no solo `code` como
--- sugiere @Column(unique = true) en City.java -- la entidad Java esta
--- desactualizada respecto a la restriccion real, pero no afecta a este
--- fix ni al script de municipios (todas sus filas comparten el mismo
--- country_id = Colombia).
+-- Side note (non-blocking, not touched here): the real UNIQUE constraint
+-- is `uk_cities_country_code` (country_id, code), not just `code` as
+-- @Column(unique = true) on City.java suggests -- the Java entity is out
+-- of sync with the real constraint, but that does not affect this fix or
+-- the municipios script (all its rows share the same country_id =
+-- Colombia).
 --
--- Seguro de correr con filas ya existentes: al agregar AUTO_INCREMENT a
--- una columna que ya es PRIMARY KEY, MySQL arranca el contador en
--- MAX(id)+1 automaticamente -- no hay riesgo de colisionar con los ids
--- ya usados por companias existentes.
+-- Safe to run with existing rows: when AUTO_INCREMENT is added to a
+-- column that is already the PRIMARY KEY, MySQL starts the counter at
+-- MAX(id)+1 automatically -- no risk of colliding with ids already used
+-- by existing companies.
 
--- UPDATE (mismo dia): el ALTER directo da Error 1833 --
+-- UPDATE (same day): the direct ALTER fails with Error 1833 --
 -- "Cannot change column 'id': used in a foreign key constraint
 -- 'FKnuljscaqqfl018qb96k1b3016' of table 'erpdb.third_parties'".
--- Limitacion conocida de MySQL/InnoDB: no deja tocar una columna que es
--- blanco de una foreign key de otra tabla (third_parties.city_id ->
--- cities.id), aunque el cambio (agregar AUTO_INCREMENT) no modifica
--- ningun dato ni afecta la relacion en si. Se desactiva la verificacion
--- de FK solo para este ALTER puntual -- no borra ni debilita la
--- constraint, que sigue existiendo y aplicandose normalmente apenas se
--- reactiva en la siguiente linea. No hay cambios de datos entre el
--- SET 0 y el SET 1, asi que no hay ventana real de riesgo.
+-- Known MySQL/InnoDB limitation: it will not let you touch a column that
+-- is the target of another table's foreign key (third_parties.city_id ->
+-- cities.id), even though the change (adding AUTO_INCREMENT) does not
+-- modify any data or affect the relationship itself. FK checks are
+-- disabled only for this one ALTER -- the constraint itself is never
+-- dropped or weakened, and applies normally again as soon as it is
+-- re-enabled on the next line. No data changes happen between the SET 0
+-- and the SET 1, so there is no real window of risk.
 SET FOREIGN_KEY_CHECKS = 0;
 ALTER TABLE cities MODIFY id BIGINT NOT NULL AUTO_INCREMENT;
 SET FOREIGN_KEY_CHECKS = 1;
 
--- Verificacion: la columna Extra debe decir "auto_increment".
+-- Verification: the Extra column should say "auto_increment".
 SHOW COLUMNS FROM cities WHERE Field = 'id';

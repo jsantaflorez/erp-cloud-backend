@@ -1,25 +1,24 @@
--- 2026-11-01 -- Ensancha third_parties.document_type a VARCHAR(10).
+-- 2026-11-01 -- Widens third_parties.document_type to VARCHAR(10).
 --
--- Motivo: el nuevo enum IdentificationDocumentType (ver
--- propuesta-enum-tipo-documento-dian-2026-11-01.md) se persiste con
--- @Enumerated(EnumType.STRING), guardando el NOMBRE de la constante
--- Java. La columna actual es VARCHAR(5) y "NIT_EXT" tiene 7 caracteres --
--- no cabe. VARCHAR(10) da margen (igual ancho que cities.code).
+-- Reason: the new IdentificationDocumentType enum (see
+-- propuesta-enum-tipo-documento-dian-2026-11-01.md) is persisted with
+-- @Enumerated(EnumType.STRING), storing the Java constant's NAME. The
+-- current column is VARCHAR(5) and "NIT_EXT" is 7 characters -- it does
+-- not fit. VARCHAR(10) gives headroom (same width as cities.code).
 --
--- Compatibilidad con datos existentes: los 4 valores que el formulario
--- manual permitia hasta ahora (NIT, CC, CE, PP) ya coinciden exactamente
--- con 4 de las 11 constantes del enum -- ningun tercero ya creado queda
--- roto por este cambio, solo se ensancha la columna.
+-- Compatibility with existing data: the 4 values the manual form allowed
+-- until now (NIT, CC, CE, PP) already match exactly 4 of the enum's 11
+-- constants -- no third party already created is broken by this change,
+-- only the column gets wider.
 --
--- Verificacion previa recomendada (no destructiva) -- antes de desplegar
--- el nuevo JAR con @Enumerated(EnumType.STRING) activo, confirma que no
--- hay ningun valor inesperado ya guardado (con la validacion anterior
--- inexistente en ThirdPartyService, en teoria cualquier string pudo
--- haberse guardado, aunque el unico camino de escritura -- el formulario
--- -- solo ofrecia esos 4 valores):
+-- Recommended pre-check (non-destructive) -- before deploying the new
+-- JAR with @Enumerated(EnumType.STRING) active, confirm there is no
+-- unexpected value already stored (with no prior validation in
+-- ThirdPartyService, any string could in theory have been saved, though
+-- the only write path -- the form -- only ever offered those 4 values):
 --   SELECT document_type, COUNT(*) FROM third_parties GROUP BY document_type;
--- Si aparece algo distinto de NIT/CC/CE/PP, avisa antes de desplegar --
--- con el enum activo, un valor no reconocido en una fila existente rompe
--- esa fila al leerla, no al guardar.
+-- If anything other than NIT/CC/CE/PP shows up, flag it before deploying
+-- -- with the enum active, an unrecognized value on an existing row
+-- breaks that row on read, not on save.
 
 ALTER TABLE third_parties MODIFY document_type VARCHAR(10) NOT NULL;

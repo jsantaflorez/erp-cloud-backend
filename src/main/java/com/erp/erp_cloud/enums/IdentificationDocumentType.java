@@ -1,28 +1,28 @@
 package com.erp.erp_cloud.enums;
 
 /**
- * Tipos de documento de identificacion segun el estandar DIAN vigente,
- * usados por {@code ThirdParty.documentType} (antes un {@code String}
- * libre de 5 caracteres, sin validacion real -- ver
- * propuesta-enum-tipo-documento-dian-2026-11-01.md, seccion 0 y 1).
+ * Identification-document types per the current DIAN standard catalog,
+ * used by {@code ThirdParty.documentType} (previously a free, unvalidated
+ * 5-character {@code String} -- see
+ * propuesta-enum-tipo-documento-dian-2026-11-01.md, sections 0 and 1).
  *
- * NOTA DE NOMBRE: existe ya un {@code com.erp.erp_cloud.entity.DocumentType}
- * en este proyecto -- es la entidad de TIPOS DE COMPROBANTE CONTABLE
- * (Factura de Venta, Recibo de Caja, etc., con numeracion consecutiva y
- * resolucion DIAN de facturacion), un concepto totalmente distinto al de
- * este enum (tipo de documento de IDENTIFICACION de una persona). Las dos
- * cosas incluso comparten alguna sigla por pura coincidencia (esa entidad
- * usa "CE"/"RC" como codigos de ejemplo de comprobante, sin relacion con
- * "Cedula de Extranjeria"/"Registro Civil" aqui). Por eso este enum se
- * llama {@code IdentificationDocumentType}, nunca {@code DocumentType} --
- * decision explicita del usuario (2026-11-01), para no crear ambiguedad
- * de nombre entre dos conceptos distintos.
+ * NAMING NOTE: this project already has a
+ * {@code com.erp.erp_cloud.entity.DocumentType} entity -- that one is for
+ * ACCOUNTING VOUCHER TYPES (Sales Invoice, Cash Receipt, etc., with
+ * consecutive numbering and a DIAN billing resolution), a completely
+ * different concept from this enum (a person's IDENTIFICATION document
+ * type). The two even share an abbreviation or two by pure coincidence
+ * (that entity uses "CE"/"RC" as example voucher codes, unrelated to
+ * "Cedula de Extranjeria"/"Registro Civil" here). That's why this enum is
+ * called {@code IdentificationDocumentType}, never {@code DocumentType} --
+ * an explicit user decision (2026-11-01), to avoid a name collision
+ * between two unrelated concepts.
  *
- * Nombres de constante = la sigla DIAN (igual a lo que ya guardaba
- * {@code third_parties.document_type} para los 4 valores que el
- * formulario manual permitia hasta ahora -- NIT, CC, CE, PP -- asi que
- * los terceros ya creados manualmente siguen siendo validos sin
- * migracion de datos, solo el ancho de columna cambia: ver
+ * Constant names = the DIAN abbreviation (matching what
+ * {@code third_parties.document_type} already stored for the 4 values the
+ * manual form allowed until now -- NIT, CC, CE, PP -- so third parties
+ * already created manually stay valid with no data migration, only the
+ * column width changes: see
  * sql/2026-11-01_widen_third_parties_document_type.sql).
  */
 public enum IdentificationDocumentType {

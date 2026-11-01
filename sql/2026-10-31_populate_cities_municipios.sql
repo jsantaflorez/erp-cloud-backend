@@ -1,47 +1,48 @@
--- 2026-10-31 -- Catalogo de Municipios (DANE) para la tabla `cities`.
+-- 2026-10-31 -- Municipios (DANE) catalog for the `cities` table.
 --
--- Fuente: export directo de SIEWIN (`SELECT * FROM t_municipios`), 1120
--- municipios colombianos, codigo DANE de 5 digitos ("codigo";"detalle").
--- Ejecucion directa solicitada por el usuario (no hay endpoint, y no debe
--- haberlo -- es una carga de catalogo geografico estatico, no un dato de
--- negocio por tenant): "No crearemos endpoints para migrar municipios...
--- Debes poblar/actualizar la tabla de municipios de nuestro tenant
--- ejecutando ese script una sola vez en la base de datos".
+-- Source: direct SIEWIN export (`SELECT * FROM t_municipios`), 1120
+-- Colombian municipalities, 5-digit DANE code ("codigo";"detalle").
+-- Run directly at the user's request (no endpoint, and there should not
+-- be one -- this is a static geographic catalog load, not per-tenant
+-- business data): "We will not create endpoints to migrate municipios...
+-- You should populate/update our tenant's municipios table by running
+-- that script once against the database."
 --
--- Por que esto resuelve de raiz el problema de municipios faltantes:
--- el importador de terceros SIEWIN (ver propuesta de terceros) exige que
--- `COD.MUNICIPIO` de cada tercero exista en esta tabla ANTES de crear el
--- tercero (city_id es NOT NULL en ThirdParty). Verificado contra el
--- catalogo real de terceros del cliente (CATALOGO_TERCEROS...xls, 320
--- filas): los 12 codigos de municipio que usa, una vez normalizados a 5
--- digitos con zero-padding (ej. pandas/Excel lee "05001" como el entero
--- 5001 y hay que re-rellenarlo), SI existen en este CSV de 1120 filas sin
--- excepcion -- cero huecos.
+-- Why this fixes the missing-municipios problem at the root: the SIEWIN
+-- third-party importer (see the terceros proposal) requires every third
+-- party's `COD.MUNICIPIO` to already exist in this table BEFORE the
+-- third party is created (city_id is NOT NULL on ThirdParty). Verified
+-- against the client's real third-party catalog (CATALOGO_TERCEROS...xls,
+-- 320 rows): the 12 municipio codes it uses, once normalized to 5 digits
+-- with zero-padding (e.g. pandas/Excel reads "05001" as the integer 5001
+-- and it has to be re-padded), DO exist in this 1120-row CSV with no
+-- exceptions -- zero gaps.
 --
--- Es GLOBAL, no por tenant: `cities` no tiene company_id (ver City.java),
--- es un catalogo geografico compartido por todas las companias, igual que
--- `countries`. Se carga una sola vez para toda la base de datos, nunca por
--- cliente.
+-- This is GLOBAL, not per-tenant: `cities` has no company_id (see
+-- City.java) -- it is a geographic catalog shared across every company,
+-- same as `countries`. Loaded once for the whole database, never per
+-- client.
 --
--- Seguro de re-ejecutar: UPSERT por `code` (unique constraint ya existe
--- en City.java: @Column(length = 10, unique = true)). Si el municipio ya
--- existe, solo se actualiza el nombre (nunca country_id, por si alguna
--- fila fue corregida manualmente despues).
+-- Safe to re-run: UPSERT on `code` (the unique constraint already exists
+-- on City.java: @Column(length = 10, unique = true)). If the municipio
+-- already exists, only the name is updated (never country_id, in case a
+-- row was corrected by hand afterwards).
 --
--- country_id se resuelve por subconsulta sobre `countries.iso3 = 'COL'`
--- (ISO 3166-1 alpha-3 de Colombia), NUNCA un literal adivinado -- no hay
--- forma de consultar la base de datos en vivo desde esta sesion para
--- confirmar el id numerico real, y el iso3 es estable sea cual sea ese id.
+-- country_id is resolved via a subquery on `countries.iso3 = 'COL'`
+-- (ISO 3166-1 alpha-3 for Colombia), NEVER a guessed literal -- there is
+-- no way to query the live database from this session to confirm the
+-- real numeric id, and iso3 is stable regardless of what that id is.
 --
--- IMPORTANTE -- precondicion: debe existir una fila en `countries` con
--- iso3 = 'COL'. Si no existe, @col_country_id quedara NULL y el INSERT
--- fallara de inmediato con "Column 'country_id' cannot be null" (fail-fast
--- deliberado -- mejor eso que 1120 filas con country_id NULL). Verificalo
--- primero si quieres, antes de correr el resto del script:
+-- IMPORTANT -- precondition: a row must exist in `countries` with
+-- iso3 = 'COL'. If it does not, @col_country_id will stay NULL and the
+-- INSERT will fail immediately with "Column 'country_id' cannot be null"
+-- (deliberate fail-fast -- better that than 1120 rows with a NULL
+-- country_id). Check this first if you like, before running the rest of
+-- the script:
 --   SELECT id, name, iso3 FROM countries WHERE iso3 = 'COL';
--- Si tu tabla countries usa otro codigo (ej. 'CO' en iso2) en vez de
--- iso3='COL', cambia la condicion del SET @col_country_id de abajo antes
--- de ejecutar.
+-- If your countries table uses a different code (e.g. 'CO' as iso2)
+-- instead of iso3='COL', change the SET @col_country_id condition below
+-- before running.
 
 SET @col_country_id = (SELECT id FROM countries WHERE iso3 = 'COL' LIMIT 1);
 
@@ -1168,7 +1169,7 @@ INSERT INTO cities (country_id, code, name) VALUES
   (@col_country_id, '99773', 'CUMARIBO')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
--- Verificacion: deberia mostrar 1120.
+-- Verification: should show 1120.
 SELECT COUNT(*) AS total_municipios_colombia
 FROM cities c
 JOIN countries co ON co.id = c.country_id
