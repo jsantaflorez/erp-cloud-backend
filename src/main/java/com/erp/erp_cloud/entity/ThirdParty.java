@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.entity;
 
 import com.erp.erp_cloud.enums.TaxRegime;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Email;
 import lombok.Data;
@@ -58,8 +59,17 @@ public class ThirdParty extends BaseEntity implements Serializable {
     @Column(name = "document_number", length = 20, nullable = false)
     private String documentNumber;
 
-    @Column(name = "document_type", length = 5, nullable = false)
-    private String documentType;
+    // CHANGED (2026-11-01): was a free String (no validation at all --
+    // see ThirdPartyService.mapRequestToEntity(), which just copied the
+    // request value through). Now a typed enum covering the full DIAN
+    // catalog -- see IdentificationDocumentType's own javadoc for why it
+    // is NOT named DocumentType (that name is already taken by the
+    // unrelated accounting-voucher-type entity). Column widened to
+    // VARCHAR(10) in sql/2026-11-01_widen_third_parties_document_type.sql
+    // -- NIT_EXT (7 chars) did not fit in the old length=5.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "document_type", length = 10, nullable = false)
+    private IdentificationDocumentType documentType;
 
     @Column(name = "verification_digit")
     private Integer verificationDigit;

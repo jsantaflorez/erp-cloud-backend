@@ -2,6 +2,8 @@ package com.erp.erp_cloud.repository;
 
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
+import com.erp.erp_cloud.enums.TaxRegime;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -49,6 +51,56 @@ public interface ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
     Page<ThirdParty> findBySearchTerm(
             @Param("companyId") Long companyId,
             @Param("searchTerm") String searchTerm,
+            Pageable pageable);
+
+    // NEW (2026-11-01, user request): backs the quick filters in
+    // ThirdPartyPage.jsx (Tipo de Persona/Tipo de Documento/Regimen).
+    // Combines the existing search-across-name-fields OR-logic with
+    // three optional equality filters, same "(:param IS NULL OR ...)"
+    // pattern as the search clause above -- a null filter is a no-op,
+    // so this single query also covers the old "just search, no
+    // filters" case (callers pass all three filter params as null).
+    //
+    // FIXES a real bug reported by the user: the frontend used to
+    // re-filter client-side over whatever 10 rows were already loaded
+    // for the current page -- filtering by NIT showed nothing whenever
+    // the loaded page's rows all happened to be CC, even though NIT
+    // matches existed on other pages. This runs server-side across the
+    // whole table instead.
+    @Query(value = "SELECT t FROM ThirdParty t WHERE t.company.id = :companyId AND (" +
+            ":searchTerm IS NULL OR :searchTerm = '' OR (" +
+            "UPPER(COALESCE(t.businessName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.tradeName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.firstName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.middleName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.lastName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.secondLastName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.email, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "UPPER(COALESCE(t.billingEmail, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+            "t.documentNumber LIKE CONCAT('%', :searchTerm, '%'))) AND " +
+            "(:personType IS NULL OR t.personType = :personType) AND " +
+            "(:documentType IS NULL OR t.documentType = :documentType) AND " +
+            "(:taxRegime IS NULL OR t.taxRegime = :taxRegime)",
+            countQuery = "SELECT COUNT(t) FROM ThirdParty t WHERE t.company.id = :companyId AND (" +
+                    ":searchTerm IS NULL OR :searchTerm = '' OR (" +
+                    "UPPER(COALESCE(t.businessName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.tradeName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.firstName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.middleName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.lastName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.secondLastName, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.email, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "UPPER(COALESCE(t.billingEmail, '')) LIKE UPPER(CONCAT('%', :searchTerm, '%')) OR " +
+                    "t.documentNumber LIKE CONCAT('%', :searchTerm, '%'))) AND " +
+                    "(:personType IS NULL OR t.personType = :personType) AND " +
+                    "(:documentType IS NULL OR t.documentType = :documentType) AND " +
+                    "(:taxRegime IS NULL OR t.taxRegime = :taxRegime)")
+    Page<ThirdParty> findByFilters(
+            @Param("companyId") Long companyId,
+            @Param("searchTerm") String searchTerm,
+            @Param("personType") String personType,
+            @Param("documentType") IdentificationDocumentType documentType,
+            @Param("taxRegime") TaxRegime taxRegime,
             Pageable pageable);
 
     @Query("SELECT tp FROM ThirdParty tp WHERE tp.company.id = :companyId AND (" +

@@ -1,6 +1,7 @@
 package com.erp.erp_cloud.dto;
 
 import com.erp.erp_cloud.enums.TaxRegime;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
@@ -14,8 +15,12 @@ public class ThirdPartyRequest {
     private String documentNumber;
 
 
-    @NotBlank
-    private String documentType;
+    // CHANGED (2026-11-01): was a free String with no validation beyond
+    // @NotBlank -- any text was accepted. Now a typed enum: an invalid
+    // value fails deserialization with a 400 on its own, no manual check
+    // needed here (same pattern already used by taxRegime below).
+    @NotNull
+    private IdentificationDocumentType documentType;
 
     @NotNull
     private TaxRegime taxRegime;

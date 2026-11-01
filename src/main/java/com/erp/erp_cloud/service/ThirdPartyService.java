@@ -5,6 +5,8 @@ import com.erp.erp_cloud.dto.ThirdPartyResponseDTO;
 import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
+import com.erp.erp_cloud.enums.TaxRegime;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
 import com.erp.erp_cloud.exception.ResourceNotFoundException;
@@ -72,15 +74,28 @@ public class ThirdPartyService extends TenantAwareService {
     // READ
     // =====================================================
 
+    // CHANGED (2026-11-01, user request): added personType/documentType/
+    // taxRegime as optional filters, backing the quick filters in
+    // ThirdPartyPage.jsx. Fixes a real bug: the frontend used to filter
+    // client-side over whatever 10 rows were already loaded for the
+    // current page, so a filter could show nothing even when matches
+    // existed on other pages. All 4 params (search + 3 filters) now
+    // combine in a single server-side query (findByFilters) whenever any
+    // of them is set; the old no-args fast path (findByCompanyId) is
+    // kept for the common case of nothing active.
     @Transactional(readOnly = true)
-    public Page<ThirdPartyResponseDTO> listAll(String searchTerm, Pageable pageable) {
+    public Page<ThirdPartyResponseDTO> listAll(String searchTerm, String personType,
+            IdentificationDocumentType documentType, TaxRegime taxRegime, Pageable pageable) {
         Long companyId = currentTenantId();
 
-        log.debug("Listing third parties for company ID: {} with search term: {}", companyId, searchTerm);
+        log.debug("Listing third parties for company ID: {} with search term: {}, personType: {}, documentType: {}, taxRegime: {}",
+                companyId, searchTerm, personType, documentType, taxRegime);
 
-        // ADAPTED: Optimized primitives call
-        Page<ThirdParty> entities = (searchTerm != null && !searchTerm.trim().isEmpty())
-                ? thirdPartyRepository.findBySearchTerm(companyId, searchTerm, pageable)
+        boolean hasSearch = searchTerm != null && !searchTerm.trim().isEmpty();
+        boolean hasFilters = personType != null || documentType != null || taxRegime != null;
+
+        Page<ThirdParty> entities = (hasSearch || hasFilters)
+                ? thirdPartyRepository.findByFilters(companyId, searchTerm, personType, documentType, taxRegime, pageable)
                 : thirdPartyRepository.findByCompanyId(companyId, pageable);
 
         return entities.map(this::mapToResponseDTO);

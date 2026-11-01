@@ -3,6 +3,7 @@ import lombok.Data;
 
 
 import com.erp.erp_cloud.enums.TaxRegime;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
 
 import java.util.Optional;
 
@@ -15,7 +16,7 @@ import java.util.Optional;
 public class ThirdPartyResponseDTO {
     private Long id;
     private String documentNumber;
-    private String documentType;
+    private IdentificationDocumentType documentType; // CHANGED (2026-11-01): was String
     private Integer verificationDigit;
     private String personType;
     private TaxRegime taxRegime;

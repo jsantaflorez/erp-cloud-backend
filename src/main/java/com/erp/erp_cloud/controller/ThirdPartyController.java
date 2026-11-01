@@ -1,9 +1,14 @@
 package com.erp.erp_cloud.controller;
 
 import com.erp.erp_cloud.dto.ApiResponse;
+import com.erp.erp_cloud.dto.SiewinThirdPartyImportRequest;
+import com.erp.erp_cloud.dto.SiewinThirdPartyImportResultDTO;
 import com.erp.erp_cloud.dto.ThirdPartyRequest;
 import com.erp.erp_cloud.dto.ThirdPartyResponseDTO;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
+import com.erp.erp_cloud.enums.TaxRegime;
 
+import com.erp.erp_cloud.service.SiewinThirdPartyImportService;
 import com.erp.erp_cloud.service.ThirdPartyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,6 +32,7 @@ import java.util.Map;
 public class ThirdPartyController {
 
     private final ThirdPartyService thirdPartyService;
+    private final SiewinThirdPartyImportService siewinThirdPartyImportService;
 
 
     @PostMapping
@@ -47,8 +53,15 @@ public class ThirdPartyController {
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Page retrieved successfully")
       public ResponseEntity<Page<ThirdPartyResponseDTO>> list(
             @RequestParam(required = false) String search,
+            // NEW (2026-11-01, user request): quick filters for Tipo de
+            // Persona/Tipo de Documento/Regimen -- see ThirdPartyService.listAll()
+            // and ThirdPartyRepository.findByFilters() for why this now
+            // filters server-side instead of over just the loaded page.
+            @RequestParam(required = false) String personType,
+            @RequestParam(required = false) IdentificationDocumentType documentType,
+            @RequestParam(required = false) TaxRegime taxRegime,
             @ParameterObject @PageableDefault(size = 10, sort = "documentNumber") Pageable pageable) {
-        return ResponseEntity.ok(thirdPartyService.listAll(search, pageable));
+        return ResponseEntity.ok(thirdPartyService.listAll(search, personType, documentType, taxRegime, pageable));
     }
 
 
@@ -98,6 +111,18 @@ public class ThirdPartyController {
         return ResponseEntity.ok(new ApiResponse<>("Third Party activated successfully", true,null));
     }
 
+
+    // NEW (2026-11-01): legacy third-party migration from SIEWIN
+    // (t_terceros). See propuesta-importador-terceros-siewin-2026-10-31.md
+    // and SiewinThirdPartyImportService's own javadoc for the full design.
+    @PostMapping("/import-siewin")
+    @Operation(summary = "Import third parties from a legacy SIEWIN export",
+            description = "Creates third parties in bulk from a parsed SIEWIN t_terceros export (frontend-parsed JSON rows), validating duplicates, document type, derived person type, and municipality code against the precargada cities catalog in a single fail-fast pass.")
+    public ResponseEntity<ApiResponse<SiewinThirdPartyImportResultDTO>> importSiewin(
+            @RequestBody SiewinThirdPartyImportRequest request) {
+        SiewinThirdPartyImportResultDTO result = siewinThirdPartyImportService.importFromSiewin(request);
+        return ResponseEntity.ok(new ApiResponse<>("SIEWIN third parties imported successfully", true, result));
+    }
 
 
 }

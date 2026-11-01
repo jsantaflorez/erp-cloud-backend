@@ -1,0 +1,25 @@
+-- 2026-11-01 -- Ensancha third_parties.document_type a VARCHAR(10).
+--
+-- Motivo: el nuevo enum IdentificationDocumentType (ver
+-- propuesta-enum-tipo-documento-dian-2026-11-01.md) se persiste con
+-- @Enumerated(EnumType.STRING), guardando el NOMBRE de la constante
+-- Java. La columna actual es VARCHAR(5) y "NIT_EXT" tiene 7 caracteres --
+-- no cabe. VARCHAR(10) da margen (igual ancho que cities.code).
+--
+-- Compatibilidad con datos existentes: los 4 valores que el formulario
+-- manual permitia hasta ahora (NIT, CC, CE, PP) ya coinciden exactamente
+-- con 4 de las 11 constantes del enum -- ningun tercero ya creado queda
+-- roto por este cambio, solo se ensancha la columna.
+--
+-- Verificacion previa recomendada (no destructiva) -- antes de desplegar
+-- el nuevo JAR con @Enumerated(EnumType.STRING) activo, confirma que no
+-- hay ningun valor inesperado ya guardado (con la validacion anterior
+-- inexistente en ThirdPartyService, en teoria cualquier string pudo
+-- haberse guardado, aunque el unico camino de escritura -- el formulario
+-- -- solo ofrecia esos 4 valores):
+--   SELECT document_type, COUNT(*) FROM third_parties GROUP BY document_type;
+-- Si aparece algo distinto de NIT/CC/CE/PP, avisa antes de desplegar --
+-- con el enum activo, un valor no reconocido en una fila existente rompe
+-- esa fila al leerla, no al guardar.
+
+ALTER TABLE third_parties MODIFY document_type VARCHAR(10) NOT NULL;
