@@ -150,7 +150,7 @@ public class UserManagementService extends TenantAwareService {
     @Transactional
     public UserSummaryDTO updateUser(Long userId, UpdateUserRequest request) {
         Long companyId = currentTenantId();
-        User user = requireUserInCurrentCompany(userId, companyId);
+        User user = requireUserManagedByCurrentCompany(userId, companyId);
 
         user.setFirstName(request.firstName());
         user.setLastName(request.lastName());
@@ -168,7 +168,7 @@ public class UserManagementService extends TenantAwareService {
     @Transactional
     public UserSummaryDTO toggleActive(Long userId) {
         Long companyId = currentTenantId();
-        User user = requireUserInCurrentCompany(userId, companyId);
+        User user = requireUserManagedByCurrentCompany(userId, companyId);
 
         if (user.getId().equals(currentUserId())) {
             throw new InvalidOperationException(
@@ -188,7 +188,7 @@ public class UserManagementService extends TenantAwareService {
     @Transactional
     public void changePassword(Long userId, ChangePasswordRequest request) {
         Long companyId = currentTenantId();
-        User user = requireUserInCurrentCompany(userId, companyId);
+        User user = requireUserManagedByCurrentCompany(userId, companyId);
 
         validatePasswordLength(request.newPassword());
 
@@ -207,8 +207,10 @@ public class UserManagementService extends TenantAwareService {
     public UserSummaryDTO assignRole(Long userId, Long roleId) {
         Long companyId = currentTenantId();
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        // SECURITY (audit 2026-11-02, A1): the target must already belong to
+        // this company. Adding a person from outside goes through
+        // createOrInviteUser (by email), never by guessing a global user id.
+        User user = requireUserInCurrentCompany(userId, companyId);
         List<Role> roles = resolveAndValidateRoles(List.of(roleId), companyId);
 
         grantRoles(user, roles, companyId);
@@ -291,6 +293,32 @@ public class UserManagementService extends TenantAwareService {
         }
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+    }
+
+    /**
+     * SECURITY (audit 2026-11-02, C2): User is a GLOBAL identity shared by
+     * every company it has a role in (multi-company accountants). Changing
+     * its password, name or active flag therefore affects its access to
+     * OTHER companies too. A company admin may only do that when the user
+     * belongs exclusively to the current company, or to themselves.
+     * Removing a shared user from this company stays available through
+     * revokeCompanyAccess / removeRole, which are scoped to this company.
+     */
+    private User requireUserManagedByCurrentCompany(Long userId, Long companyId) {
+        User user = requireUserInCurrentCompany(userId, companyId);
+        if (userId.equals(currentUserId())) {
+            return user;
+        }
+        long companies = userRoleRepository.countDistinctCompaniesByUserId(userId);
+        if (companies > 1) {
+            log.warn("USER_MGMT_DENIED | reason: SHARED_USER | targetUserId: {} | companyId: {} | companies: {}",
+                    userId, companyId, companies);
+            throw new InvalidOperationException(
+                    "Este usuario tambien tiene acceso a otras empresas; solo el puede cambiar sus datos o su contrasena. "
+                            + "Puede retirarle el acceso a esta empresa.",
+                    "USER_SHARED_WITH_OTHER_COMPANIES");
+        }
+        return user;
     }
 
     private void validatePasswordLength(String password) {

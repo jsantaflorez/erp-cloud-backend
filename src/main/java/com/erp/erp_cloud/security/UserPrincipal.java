@@ -20,6 +20,7 @@ public class UserPrincipal implements UserDetails {
     private final Long companyId;
     private final Collection<? extends GrantedAuthority> authorities;
     private final boolean active;
+    private final boolean accountNonLocked;
 
     /**
      * Production constructor: Maps your database User entity metrics into Spring Security context properties.
@@ -31,6 +32,8 @@ public class UserPrincipal implements UserDetails {
         this.fullName = user.getFullName();     // Resolves the formatted firstName + lastName dynamic string
         this.companyId = companyId;
         this.active = user.isActive();
+        this.accountNonLocked = user.getLockedUntil() == null
+                || !user.getLockedUntil().isAfter(java.time.LocalDateTime.now());
 
         // Unifies roles (with ROLE_ prefix) and granular permissions into a single collection
         this.authorities = Stream.concat(
@@ -50,6 +53,7 @@ public class UserPrincipal implements UserDetails {
         this.companyId = companyId;
         this.authorities = authorities;
         this.active = true;
+        this.accountNonLocked = true;
     }
     /**
      * Static factory method utilized by the JWT verification filter to rebuild
@@ -110,7 +114,7 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return true;
+        return accountNonLocked;
     }
 
     @Override

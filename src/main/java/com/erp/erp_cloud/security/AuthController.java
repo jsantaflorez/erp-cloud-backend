@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -29,6 +30,7 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider tokenProvider;
     private final UserRepository userRepository;
+    private final LoginAttemptService loginAttemptService;
 
     /**
      * Public endpoint to validate user credentials and issue secure short-lived
@@ -48,16 +50,27 @@ public class AuthController {
 
         // Combines email and companyId into a unified principal string --
         // CustomUserDetailsService splits this to enforce tenant isolation
-        String unifiedPrincipal = loginRequest.email() + "|" + loginRequest.companyId();
+        // B1 (audit 2026-11-02): normalized like every other email lookup.
+        String email = loginRequest.email().trim().toLowerCase();
+        String unifiedPrincipal = email + "|" + loginRequest.companyId();
 
         // Delegates full credential verification to the configured AuthenticationProvider chain.
         // On failure, BadCredentialsException propagates to GlobalExceptionHandler -> 401 JSON response.
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(unifiedPrincipal, loginRequest.password())
-        );
+        // A locked account raises LockedException (UserPrincipal.isAccountNonLocked) -> 401 too.
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(unifiedPrincipal, loginRequest.password())
+            );
+        } catch (BadCredentialsException ex) {
+            // A2 (audit 2026-11-02): count the failure; locks the account at the threshold.
+            loginAttemptService.recordFailure(email);
+            throw ex;
+        }
 
         // Reclaims the rich authenticated principal from the security thread context
         UserPrincipal userPrincipal = (UserPrincipal) authentication.getPrincipal();
+        loginAttemptService.recordSuccess(userPrincipal.getId());
 
         // Generates the signed JWT token from the verified authentication context
         String jwt = tokenProvider.generateToken(authentication);

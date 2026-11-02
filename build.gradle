@@ -46,6 +46,10 @@ dependencies {
 	// MySQL
 	implementation 'com.mysql:mysql-connector-j'
 
+	// Schema migrations (audit 2026-11-02, A3) -- versions managed by the Spring Boot BOM
+	implementation 'org.flywaydb:flyway-core'
+	implementation 'org.flywaydb:flyway-mysql'
+
 	// Lombok
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'

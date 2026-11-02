@@ -4,7 +4,6 @@ import com.erp.erp_cloud.entity.User;
 import com.erp.erp_cloud.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -72,9 +71,13 @@ public class CustomUserDetailsService implements UserDetailsService {
         }
 
         if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(LocalDateTime.now())) {
+            // Lockout (audit 2026-11-02, A2): no longer thrown from here.
+            // DaoAuthenticationProvider wraps any non-UsernameNotFound exception
+            // from loadUserByUsername into InternalAuthenticationServiceException
+            // (a 500). UserPrincipal.isAccountNonLocked() now carries the state,
+            // so the provider's pre-authentication check raises LockedException.
             log.warn("AUTH_FAIL | reason: ACCOUNT_LOCKED | identityHash: {} | lockedUntil: {}",
                     email.hashCode(), user.getLockedUntil());
-            throw new LockedException("Unauthorized identity criteria match rejected.");
         }
 
         // 4. Extract roles and permissions from the fetched graph,
@@ -84,6 +87,9 @@ public class CustomUserDetailsService implements UserDetailsService {
 
         user.getUserRoles().stream()
                 .filter(ur -> ur.getCompany().getId().equals(companyId))
+                // B1 (audit 2026-11-02): a role in an INACTIVE company grants nothing,
+                // matching findAccessibleCompaniesByEmail (the login dropdown).
+                .filter(ur -> Boolean.TRUE.equals(ur.getCompany().getActive()))
                 .forEach(ur -> {
                     roleCodes.add("ROLE_" + ur.getRole().getCode());
                     ur.getRole().getPermissions()

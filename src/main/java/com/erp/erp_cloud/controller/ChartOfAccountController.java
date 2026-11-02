@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.*;
 
 
@@ -58,6 +59,8 @@ public class ChartOfAccountController {
      * Plan de Cuentas is completely empty -- see
      * ChartAccountTemplateImportService for the full design/assumptions.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/import-template")
     @Operation(
             summary = "Import the standard reference PUC as real accounts",
@@ -82,6 +85,8 @@ public class ChartOfAccountController {
      * as plain JSON -- see SiewinPucImportService for the full digit-jump
      * re-derivation, validation and category/nature resolution rules.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/import-siewin")
     @Operation(
             summary = "Import a legacy PUC exported from SIEWIN",

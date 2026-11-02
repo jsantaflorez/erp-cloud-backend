@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.DocumentTypeRequest;
 import com.erp.erp_cloud.dto.DocumentTypeResponseDTO;
@@ -100,6 +101,8 @@ public class DocumentTypeController {
         return ResponseEntity.ok(new ApiResponse<>("Document type activated successfully", true,null));
     }
 
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PatchMapping("/{id}/reset-consecutive")
     @Operation(summary = "Reset consecutive numbering", description = "Manually updates the current consecutive number for the next document to be generated.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Consecutive reset successfully")

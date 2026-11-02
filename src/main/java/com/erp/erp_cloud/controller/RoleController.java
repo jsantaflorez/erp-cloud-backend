@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.RoleOptionDTO;
 import com.erp.erp_cloud.service.UserManagementService;
@@ -17,6 +18,8 @@ import java.util.List;
 @RequestMapping("/api/v1/roles")
 @RequiredArgsConstructor
 @Tag(name = "Roles", description = "Roles selectable for the current company's user-management screen")
+// C1 (audit 2026-11-02): user/role administration is administrators only
+@PreAuthorize("@authz.isAdmin()")
 public class RoleController {
 
     private final UserManagementService userManagementService;

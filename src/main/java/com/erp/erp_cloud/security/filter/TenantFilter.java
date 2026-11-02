@@ -3,6 +3,7 @@ package com.erp.erp_cloud.security.filter;
 
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.entity.Company;
+import com.erp.erp_cloud.repository.UserRoleRepository;
 import com.erp.erp_cloud.security.UserPrincipal;
 import com.erp.erp_cloud.security.context.TenantContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +27,7 @@ public class TenantFilter extends OncePerRequestFilter {
 
     // private final TenantContext tenantContext;
     private final TenantResolver tenantResolver;
+    private final UserRoleRepository userRoleRepository;
     private final ObjectMapper objectMapper;
 
     /**
@@ -49,35 +51,29 @@ public class TenantFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        Long companyId = null;
-
-        // PRIMARY: Extract companyId from the cryptographically signed JWT principal
+        // SECURITY (audit 2026-11-02, M1): the tenant comes ONLY from the
+        // signed JWT. The old X-Tenant-Id header fallback was removed: it was
+        // harmless only as long as this filter happened to run after Spring
+        // Security, and any future @Order change would have turned it into a
+        // full cross-tenant bypass.
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (authentication != null
-                && authentication.getPrincipal() instanceof UserPrincipal principal) {
-            companyId = principal.getCompanyId();
-
-        } else {
-            // FALLBACK: X-Tenant-Id header — valid only for unauthenticated public pipelines
-            String headerTenant = request.getHeader("X-Tenant-Id");
-            if (headerTenant != null && !headerTenant.isBlank()) {
-                try {
-                    companyId = Long.parseLong(headerTenant);
-                } catch (NumberFormatException ex) {
-                    log.warn("TENANT_FILTER_BLOCKED | reason: INVALID_TENANT_HEADER_FORMAT | URI: {} {}",
-                            request.getMethod(), request.getRequestURI());
-                    writeErrorResponse(response, "Invalid X-Tenant-Id header format.");
-                    return;
-                }
-            }
-        }
-
-        // STRICT VALIDATION: All business endpoints require a resolved tenant context
-        if (companyId == null) {
+        if (authentication == null
+                || !(authentication.getPrincipal() instanceof UserPrincipal principal)
+                || principal.getCompanyId() == null) {
             log.warn("TENANT_FILTER_BLOCKED | reason: MISSING_TENANT_CONTEXT | URI: {} {}",
                     request.getMethod(), request.getRequestURI());
-            writeErrorResponse(response, "Missing multi-tenant context — JWT claim or X-Tenant-Id header required.");
+            writeErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "MISSING_TENANT_CONTEXT");
+            return;
+        }
+        Long companyId = principal.getCompanyId();
+
+        // SECURITY (audit 2026-11-02, M2): re-check on every request that the
+        // user is still active and still holds a role in an active company,
+        // so revoking access takes effect immediately, not at token expiry.
+        if (!userRoleRepository.hasActiveAccess(principal.getId(), companyId)) {
+            log.warn("TENANT_FILTER_BLOCKED | reason: ACCESS_REVOKED | userId: {} | tenant: {} | URI: {} {}",
+                    principal.getId(), companyId, request.getMethod(), request.getRequestURI());
+            writeErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "ACCESS_REVOKED");
             return;
         }
 
@@ -97,7 +93,7 @@ public class TenantFilter extends OncePerRequestFilter {
 
         } catch (IllegalStateException ex) {
             log.warn("TENANT_FILTER_BLOCKED | reason: COMPANY_NOT_FOUND | companyId: {}", companyId);
-            writeErrorResponse(response, "Invalid tenant identifier.");
+            writeErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "INVALID_TENANT");
 
         } finally {
             // Always clear both ThreadLocals — prevents context leaking in thread pools
@@ -109,8 +105,8 @@ public class TenantFilter extends OncePerRequestFilter {
      * Writes a structured ApiResponse error JSON directly to the servlet response.
      * Used when the filter intercepts before GlobalExceptionHandler is reachable.
      */
-    private void writeErrorResponse(HttpServletResponse response, String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+    private void writeErrorResponse(HttpServletResponse response, int status, String message) throws IOException {
+        response.setStatus(status);
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
         response.getWriter().write(

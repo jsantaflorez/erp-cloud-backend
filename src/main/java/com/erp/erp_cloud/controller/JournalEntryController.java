@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.*;
 import com.erp.erp_cloud.service.JournalEntryService;
 import jakarta.validation.Valid;
@@ -304,6 +305,8 @@ public class JournalEntryController {
      * Annulling is the professional way to "cancel" a voucher without deleting it.
      * The document keeps its number but its financial effect is neutralized.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PatchMapping("/{id}/annul")
     @Operation(
             summary = "Annul journal entry",

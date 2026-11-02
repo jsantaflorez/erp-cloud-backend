@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.SiewinThirdPartyImportRequest;
 import com.erp.erp_cloud.dto.SiewinThirdPartyImportResultDTO;
@@ -115,6 +116,8 @@ public class ThirdPartyController {
     // NEW (2026-11-01): legacy third-party migration from SIEWIN
     // (t_terceros). See propuesta-importador-terceros-siewin-2026-10-31.md
     // and SiewinThirdPartyImportService's own javadoc for the full design.
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/import-siewin")
     @Operation(summary = "Import third parties from a legacy SIEWIN export",
             description = "Creates third parties in bulk from a parsed SIEWIN t_terceros export (frontend-parsed JSON rows), validating duplicates, document type, derived person type, and municipality code against the precargada cities catalog in a single fail-fast pass.")

@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.AccountingPeriodActionRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodRequest;
 import com.erp.erp_cloud.dto.AccountingPeriodResponseDTO;
@@ -96,6 +97,8 @@ public class AccountingPeriodController {
     /**
      * Closes an accounting period (Monthly close).
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/{year}/{month}/close")
     @Operation(summary = "Close accounting period")
     public ResponseEntity<ApiResponse<AccountingPeriodResponseDTO>> closePeriod(
@@ -127,6 +130,8 @@ public class AccountingPeriodController {
      * next year's opening-balance snapshot -- see
      * AccountingPeriodService.closeYear for the full algorithm.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/{year}/close-year")
     @Operation(summary = "Close fiscal year")
     public ResponseEntity<ApiResponse<AccountingPeriodResponseDTO>> closeYear(
@@ -142,6 +147,8 @@ public class AccountingPeriodController {
     /**
      * Reopens a closed accounting period.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/{year}/{month}/reopen")
     @Operation(summary = "Reopen closed period")
     public ResponseEntity<ApiResponse<AccountingPeriodResponseDTO>> reopenPeriod(
@@ -166,6 +173,8 @@ public class AccountingPeriodController {
     /**
      * Reopens a closed fiscal year.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PostMapping("/{year}/reopen-year")
     @Operation(summary = "Reopen fiscal year", description = "Removes the annual seal. Individual closed months will remain closed.")
     public ResponseEntity<ApiResponse<Void>> reopenYear(

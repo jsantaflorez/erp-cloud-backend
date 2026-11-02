@@ -147,12 +147,25 @@ public class GlobalExceptionHandler {
     })
     public ResponseEntity<ApiResponse<Void>> handlePersistenceException(Exception ex, HttpServletRequest request) {
         Throwable cause = ex;
-        while (cause.getCause() != null && !(cause instanceof IllegalArgumentException)) {
+        while (cause.getCause() != null
+                && !(cause instanceof IllegalArgumentException)
+                && !(cause instanceof BusinessException)) {
             cause = cause.getCause();
         }
 
-        String message = cause.getMessage();
-        log.warn("Persistence or Data Access error: {}", message);
+        // M3 (audit 2026-11-02): only messages WE authored reach the client
+        // (entity validation IllegalArgumentException, or a BusinessException
+        // thrown from a JPA callback). Raw Hibernate/JDBC text can carry table,
+        // column or SQL details, so it is logged and replaced by a stable code.
+        String message;
+        if (cause instanceof BusinessException business) {
+            message = business.getErrorCode() != null ? business.getErrorCode() : business.getMessage();
+        } else if (cause instanceof IllegalArgumentException && cause.getMessage() != null) {
+            message = cause.getMessage();
+        } else {
+            message = "DATA_ACCESS_ERROR";
+        }
+        log.warn("Persistence or Data Access error: {}", cause.getMessage(), ex);
 
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
@@ -208,6 +221,20 @@ public class GlobalExceptionHandler {
     // ═══════════════════════════════════════════════════════════
     // FALLBACK / CATCH-ALL (Lowest Priority)
     // ═══════════════════════════════════════════════════════════
+
+    /**
+     * B2 (audit 2026-11-02): a @PreAuthorize denial thrown from a controller
+     * method reaches this advice before Spring Security's own handler, so
+     * without this mapping it fell into the generic 500 below.
+     */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex, HttpServletRequest request) {
+        log.warn("Access denied | URI: {} {}", request.getMethod(), request.getRequestURI());
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(buildError("ACCESS_DENIED", request));
+    }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneralException(Exception ex, HttpServletRequest request) {

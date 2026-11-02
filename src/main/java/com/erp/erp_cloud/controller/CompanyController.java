@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.CompanyClosingDefaultsRequest;
 import com.erp.erp_cloud.dto.CompanyResponseDTO;
@@ -40,6 +41,8 @@ public class CompanyController {
      * accounts, used to pre-fill (never force) the year-end closing
      * screen's dropdowns. Send null for either field to clear it.
      */
+    // C1 (audit 2026-11-02): administrators only, see AuthorizationRules
+    @PreAuthorize("@authz.isAdmin()")
     @PatchMapping("/me/closing-defaults")
     @Operation(
             summary = "Set default Ganancia/Pérdida accounts",

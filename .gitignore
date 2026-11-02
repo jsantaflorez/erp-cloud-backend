@@ -38,3 +38,10 @@ out/
 
 ### Local secrets (never commit) ###
 application-local.properties
+
+### Backups and DB credentials (audit 2026-11-02) ###
+backup.cnf
+restore.cnf
+*.sql.gz
+*.sql.gz.sha256
+backups/

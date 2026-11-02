@@ -24,6 +24,16 @@ public class JournalEntryItem extends BaseEntity implements Serializable {
     @JoinColumn(name = "journal_entry_id", nullable = false)
     private JournalEntry journalEntry;
 
+    /**
+     * Tenant of this line, always copied from its journal entry (audit
+     * 2026-11-02, M5). It exists so the database can enforce, through
+     * composite foreign keys (company_id, account_id) etc., that a line never
+     * references another company's account, third party, cost center or tax.
+     * See sql/2026-11-02_tenant_integrity_and_indexes.sql. Never set by hand.
+     */
+    @Column(name = "company_id", nullable = false)
+    private Long companyId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "account_id", nullable = false)
     private ChartOfAccounts account;
@@ -75,6 +85,13 @@ public class JournalEntryItem extends BaseEntity implements Serializable {
     @PrePersist
     @PreUpdate
     void validateAmounts() {
+        // M5 (audit 2026-11-02): keep the denormalized tenant in sync with the
+        // header. Done here because JPA allows a single @PrePersist/@PreUpdate
+        // callback method per entity class.
+        if (journalEntry != null && journalEntry.getCompany() != null) {
+            companyId = journalEntry.getCompany().getId();
+        }
+
         // BUG FIX: JournalEntryService.annul() deliberately zeroes out
         // every item's debit AND credit to neutralize the entry's
         // financial effect (see annul()) -- that's the one legitimate case

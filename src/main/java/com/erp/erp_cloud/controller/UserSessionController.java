@@ -15,7 +15,6 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -104,7 +103,8 @@ public class UserSessionController {
                     email.hashCode(), targetCompanyId);
             throw new InvalidOperationException(
                     "No tiene acceso a la compania seleccionada.", "NO_ACCESS_TO_COMPANY");
-        } catch (LockedException ex) {
+        }
+        if (!targetPrincipal.isAccountNonLocked() || !targetPrincipal.isEnabled()) {
             log.warn("SWITCH_COMPANY_DENIED | reason: ACCOUNT_LOCKED | identityHash: {}", email.hashCode());
             throw new InvalidOperationException(
                     "La cuenta esta temporalmente bloqueada.", "ACCOUNT_LOCKED");

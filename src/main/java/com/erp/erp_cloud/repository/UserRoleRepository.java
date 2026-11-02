@@ -40,4 +40,23 @@ public interface UserRoleRepository extends TenantAwareRepository<UserRole, Long
     boolean existsByUserIdAndRoleIdAndCompanyId(Long userId, Long roleId, Long companyId);
 
     boolean existsByUserIdAndCompanyId(Long userId, Long companyId);
+
+    /**
+     * Number of distinct companies a user has at least one role in
+     * (audit 2026-11-02, C2): a user shared with other companies cannot
+     * have its global identity changed by one company's admin.
+     */
+    @Query("SELECT COUNT(DISTINCT ur.company.id) FROM UserRole ur WHERE ur.user.id = :userId")
+    long countDistinctCompaniesByUserId(@Param("userId") Long userId);
+
+    /**
+     * Per-request access check used by TenantFilter (audit 2026-11-02, M2):
+     * the user is still active and still holds a role in an active company.
+     * Makes revoking access or deactivating a user/company effective on the
+     * very next request instead of when the JWT expires.
+     */
+    @Query("SELECT CASE WHEN COUNT(ur) > 0 THEN true ELSE false END FROM UserRole ur " +
+            "WHERE ur.user.id = :userId AND ur.company.id = :companyId " +
+            "AND ur.user.active = true AND ur.company.active = true")
+    boolean hasActiveAccess(@Param("userId") Long userId, @Param("companyId") Long companyId);
 }

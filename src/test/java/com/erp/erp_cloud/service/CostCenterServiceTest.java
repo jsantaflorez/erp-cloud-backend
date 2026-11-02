@@ -260,4 +260,15 @@ class CostCenterServiceTest {
 
         assertThat(existing.isActive()).isTrue();
     }
+
+    @Test
+    @DisplayName("C3: getChildren() only queries the current company's centers")
+    void getChildren_isScopedToCurrentCompany() {
+        when(repository.findByCompanyIdAndParentId(COMPANY_ID, 10L)).thenReturn(java.util.List.of());
+
+        assertThat(service.getChildren(10L)).isEmpty();
+
+        org.mockito.Mockito.verify(repository).findByCompanyIdAndParentId(COMPANY_ID, 10L);
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).findByParentId(10L);
+    }
 }

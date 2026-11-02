@@ -36,6 +36,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Tag("integration")
 @SpringBootTest
 @AutoConfigureMockMvc
+// Many logins from the same IP in one context: the per-IP limit (A2) is
+// covered by AuthRateLimitFilterTest instead.
+@org.springframework.test.context.TestPropertySource(properties = "app.security.rate-limit.enabled=false")
 class AuthControllerIntegrationTest {
 
     // --- Constants to avoid magic strings scattered across test methods ---

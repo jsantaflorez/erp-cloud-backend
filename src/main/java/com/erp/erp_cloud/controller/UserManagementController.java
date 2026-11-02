@@ -1,5 +1,6 @@
 package com.erp.erp_cloud.controller;
 
+import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.ChangePasswordRequest;
 import com.erp.erp_cloud.dto.CreateUserRequest;
@@ -21,6 +22,8 @@ import java.util.List;
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
 @Tag(name = "Users", description = "Tenant-scoped user administration: who has access to the current company and with which roles")
+// C1 (audit 2026-11-02): user/role administration is administrators only
+@PreAuthorize("@authz.isAdmin()")
 public class UserManagementController {
 
     private final UserManagementService userManagementService;

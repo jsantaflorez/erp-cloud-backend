@@ -50,4 +50,39 @@ class GlobalExceptionHandlerTest {
         assertThat(body.getMessage()).doesNotContain("ChartOfAccount already exists");
         assertThat(body.isSuccess()).isFalse();
     }
+
+    @Test
+    @DisplayName("B2: a @PreAuthorize denial returns 403 ACCESS_DENIED, not a 500")
+    void handleAccessDenied_returns403() {
+        var response = handler.handleAccessDenied(
+                new org.springframework.security.access.AccessDeniedException("Access Denied"), request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(403);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().getMessage()).isEqualTo("ACCESS_DENIED");
+    }
+
+    @Test
+    @DisplayName("M3: raw Hibernate/JDBC messages are replaced by DATA_ACCESS_ERROR")
+    void handlePersistence_hidesRawDatabaseMessage() {
+        var ex = new jakarta.persistence.PersistenceException("could not execute statement",
+                new RuntimeException("Unknown column 'x' in 'journal_entry_items'"));
+
+        ApiResponse<Void> body = handler.handlePersistenceException(ex, request).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.getMessage()).isEqualTo("DATA_ACCESS_ERROR");
+    }
+
+    @Test
+    @DisplayName("M3: messages we authored (IllegalArgumentException from entity validation) still reach the client")
+    void handlePersistence_keepsOwnValidationMessage() {
+        var ex = new jakarta.persistence.PersistenceException("wrapper",
+                new IllegalArgumentException("Account code must be numeric"));
+
+        ApiResponse<Void> body = handler.handlePersistenceException(ex, request).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.getMessage()).isEqualTo("Account code must be numeric");
+    }
 }

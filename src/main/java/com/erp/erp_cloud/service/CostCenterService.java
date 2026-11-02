@@ -169,10 +169,12 @@ public class CostCenterService extends TenantAwareService {
      */
     @Transactional(readOnly = true)
     public List<CostCenterResponseDTO> getChildren(Long parentId) {
-        log.debug("Listing children cost centers for parent id: {}", parentId);
+        Long companyId = currentTenantId();
+        log.debug("Listing children cost centers for parent id: {} | tenant: {}", parentId, companyId);
 
-        // We still use findByParentId but map the results to DTOs
-        return repository.findByParentId(parentId)
+        // SECURITY (audit 2026-11-02, C3): scoped by tenant. The previous
+        // unscoped findByParentId(parentId) leaked other companies' centers.
+        return repository.findByCompanyIdAndParentId(companyId, parentId)
                 .stream()
                 .map(this::mapToResponseDTO)
                 .toList();

@@ -1,0 +1,18 @@
+# Copiar fuera del repositorio (p. ej. /etc/erp/backup.cnf o C:\erp\backup.cnf),
+# con permisos solo para el usuario que ejecuta el backup. NUNCA en git.
+#
+# Usuario de solo lectura para respaldos (ejecutar una vez como root):
+#   CREATE USER 'erp_backup'@'%' IDENTIFIED BY '<contrasena-larga>';
+#   GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES, PROCESS ON *.* TO 'erp_backup'@'%';
+# ('%' porque el MySQL local corre en Docker y ve la conexion desde el gateway.)
+[client]
+user=erp_backup
+password=<contrasena-larga>
+host=127.0.0.1
+port=3308
+
+[mysqldump]
+user=erp_backup
+password=<contrasena-larga>
+host=127.0.0.1
+port=3308
