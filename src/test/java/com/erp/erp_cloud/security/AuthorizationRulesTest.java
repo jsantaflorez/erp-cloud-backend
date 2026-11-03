@@ -31,22 +31,29 @@ class AuthorizationRulesTest {
     @Test
     @DisplayName("Configured role codes are normalized with the ROLE_ prefix")
     void normalizesRoleCodes() {
-        AuthorizationRules rules = new AuthorizationRules(List.of(" SYS_ADMIN ", "ROLE_ADMIN", ""));
-        assertThat(rules.adminAuthorities()).containsExactlyInAnyOrder("ROLE_SYS_ADMIN", "ROLE_ADMIN");
+        AuthorizationRules rules = new AuthorizationRules(List.of(" SYS_ADMIN ", "ROLE_COMPANY_ADMIN", ""));
+        assertThat(rules.adminAuthorities()).containsExactlyInAnyOrder("ROLE_SYS_ADMIN", "ROLE_COMPANY_ADMIN");
     }
 
     @Test
     @DisplayName("A user holding a configured admin role is an administrator")
     void adminRoleGrantsAccess() {
         authenticateWith("ROLE_SYS_ADMIN", "INVOICE_READ");
-        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "ADMIN")).isAdmin()).isTrue();
+        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "COMPANY_ADMIN")).isAdmin()).isTrue();
     }
 
     @Test
     @DisplayName("A user with only non-admin roles or permissions is not an administrator")
     void nonAdminIsDenied() {
         authenticateWith("ROLE_ACCOUNTANT", "SYS_ADMIN");   // a PERMISSION named like a role does not count
-        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "ADMIN")).isAdmin()).isFalse();
+        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "COMPANY_ADMIN")).isAdmin()).isFalse();
+    }
+
+    @Test
+    @DisplayName("COMPANY_ADMIN (a real role code in roles.code) is an administrator with the default list")
+    void companyAdminGrantsAccess() {
+        authenticateWith("ROLE_COMPANY_ADMIN");
+        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "COMPANY_ADMIN")).isAdmin()).isTrue();
     }
 
     @Test

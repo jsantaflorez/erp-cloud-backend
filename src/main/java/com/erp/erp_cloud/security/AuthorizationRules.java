@@ -17,14 +17,14 @@ import java.util.stream.Collectors;
  * Role codes are company-scoped rows in the database, so the list of codes
  * that count as "administrator" is configuration, not code:
  * {@code app.security.admin-roles} (comma separated, with or without the
- * ROLE_ prefix). Default: SYS_ADMIN,ADMIN.
+ * ROLE_ prefix). Default: SYS_ADMIN,COMPANY_ADMIN.
  */
 @Component("authz")
 public class AuthorizationRules {
 
     private final Set<String> adminAuthorities;
 
-    public AuthorizationRules(@Value("${app.security.admin-roles:SYS_ADMIN,ADMIN}") List<String> adminRoles) {
+    public AuthorizationRules(@Value("${app.security.admin-roles:SYS_ADMIN,COMPANY_ADMIN}") List<String> adminRoles) {
         this.adminAuthorities = adminRoles.stream()
                 .map(String::trim)
                 .filter(code -> !code.isEmpty())
