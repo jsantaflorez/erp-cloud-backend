@@ -6,6 +6,7 @@ import com.erp.erp_cloud.entity.City;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.entity.CostCenter;
 import com.erp.erp_cloud.entity.ThirdParty;
+import com.erp.erp_cloud.enums.IdentificationDocumentType;
 import com.erp.erp_cloud.enums.TaxRegime;
 import com.erp.erp_cloud.exception.DuplicateResourceException;
 import com.erp.erp_cloud.exception.InvalidOperationException;
@@ -90,7 +91,7 @@ class ThirdPartyServiceTest {
     private ThirdPartyRequest baseNaturalRequest(String documentNumber) {
         ThirdPartyRequest req = new ThirdPartyRequest();
         req.setDocumentNumber(documentNumber);
-        req.setDocumentType("CC");
+        req.setDocumentType(IdentificationDocumentType.CC);
         req.setPersonType("NATURAL");
         req.setTaxRegime(TaxRegime.INDIVIDUAL);
         req.setFirstName("Juan");
@@ -135,7 +136,7 @@ class ThirdPartyServiceTest {
     @DisplayName("create() leaves the DV null for non-numeric documents (e.g. passport)")
     void create_nonNumericDocument_hasNoVerificationDigit() {
         ThirdPartyRequest request = baseNaturalRequest("AB1234567");
-        request.setDocumentType("PP");
+        request.setDocumentType(IdentificationDocumentType.PP);
 
         ThirdPartyResponseDTO result = thirdPartyService.create(request);
 
