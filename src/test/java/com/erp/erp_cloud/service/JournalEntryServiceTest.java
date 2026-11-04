@@ -796,6 +796,53 @@ class JournalEntryServiceTest {
         assertThat(result.getItems().get(0).getDebit()).isEqualByComparingTo("250.00");
     }
 
+    private ThirdParty inactiveThirdParty(Long id) {
+        ThirdParty tp = new ThirdParty();
+        tp.setId(id);
+        tp.setCompany(testCompany);
+        tp.setActive(false);
+        tp.setDocumentNumber("900" + id);
+        tp.setBusinessName("TERCERO INACTIVO " + id);
+        when(thirdPartyRepository.findById(id)).thenReturn(Optional.of(tp));
+        return tp;
+    }
+
+    @Test
+    @DisplayName("update() keeps a third party that was already on the entry, even if it was deactivated later")
+    void update_keepsInactiveThirdPartyAlreadyOnEntry() {
+        debitAccount.setRequiresThirdParty(true);
+        ThirdParty inactive = inactiveThirdParty(THIRD_PARTY_ID);
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.getItems().get(0).setThirdParty(inactive);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.getItems().get(0).setThirdPartyId(THIRD_PARTY_ID);
+        request.setDescription("Corrected description");
+
+        JournalEntryResponseDTO result = service.update(999L, request);
+
+        assertThat(result.getDescription()).isEqualTo("Corrected description");
+        assertThat(result.getItems().get(0).getThirdPartyId()).isEqualTo(THIRD_PARTY_ID);
+    }
+
+    @Test
+    @DisplayName("update() still rejects adding an inactive third party that was NOT on the entry")
+    void update_rejectsNewInactiveThirdParty() {
+        debitAccount.setRequiresThirdParty(true);
+        inactiveThirdParty(THIRD_PARTY_ID);
+        JournalEntry entry = existingEntry(LocalDate.now());   // no third party on its lines
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.getItems().get(0).setThirdPartyId(THIRD_PARTY_ID);
+
+        assertThatThrownBy(() -> service.update(999L, request))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("THIRD_PARTY_INACTIVE"));
+    }
+
     @Test
     @DisplayName("update() rejects editing an annulled entry (REGRESSION GUARD)")
     void update_annulledEntry_throws() {

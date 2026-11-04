@@ -213,6 +213,17 @@ public class JournalEntryService extends TenantAwareService {
      * Processes and validates all line items.
      */
     private void processLineItems(JournalEntry entry, JournalEntryRequest request, Long companyId) {
+        processLineItems(entry, request, companyId, Set.of());
+    }
+
+    /**
+     * @param keptInactiveThirdPartyIds third parties that were ALREADY on the
+     *        entry being edited (2026-11-04). They may stay on it even if they
+     *        were deactivated afterwards; any other inactive third party is
+     *        still rejected. Empty for new entries (create/duplicate).
+     */
+    private void processLineItems(JournalEntry entry, JournalEntryRequest request, Long companyId,
+                                  Set<Long> keptInactiveThirdPartyIds) {
         for (int i = 0; i < request.getItems().size(); i++) {
             var itemDto = request.getItems().get(i);
             final int itemIndex = i;
@@ -228,7 +239,7 @@ public class JournalEntryService extends TenantAwareService {
             item.setDescription(itemDto.getDescription());
 
             // Handle optional fields based on account configuration
-            handleThirdParty(item, itemDto, account, companyId);
+            handleThirdParty(item, itemDto, account, companyId, keptInactiveThirdPartyIds);
             handleCostCenter(item, itemDto, account, companyId);
 
             // Tax-linked accounts: derive the Tax from the account and
@@ -451,8 +462,15 @@ public class JournalEntryService extends TenantAwareService {
         existingEntry.setDescription(request.getDescription());
 
         // 5. ITEMS UPDATE
+        // Third parties already on this entry may be kept even if they were
+        // deactivated after it was posted (deactivation only blocks NEW use).
+        Set<Long> keptThirdPartyIds = existingEntry.getItems().stream()
+                .map(JournalEntryItem::getThirdParty)
+                .filter(Objects::nonNull)
+                .map(ThirdParty::getId)
+                .collect(java.util.stream.Collectors.toSet());
         existingEntry.getItems().clear();
-        processLineItems(existingEntry, request, companyId);
+        processLineItems(existingEntry, request, companyId, keptThirdPartyIds);
 
         // 6. FINANCIAL VALIDATION -- same reasoning as create(): run on
         // the final, possibly tax-recalculated item amounts, after
@@ -533,7 +551,8 @@ public class JournalEntryService extends TenantAwareService {
         return account;
     }
 
-    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Long companyId) {
+    private void handleThirdParty(JournalEntryItem item, JournalEntryRequest.ItemRequest dto, ChartOfAccounts account, Long companyId,
+                                  Set<Long> keptInactiveThirdPartyIds) {
         if (account.isRequiresThirdParty()) {
             if (dto.getThirdPartyId() == null) {
                 throw new InvalidOperationException(
@@ -546,9 +565,11 @@ public class JournalEntryService extends TenantAwareService {
                     .filter(t -> t.getCompany().getId().equals(companyId))
                     .orElseThrow(() -> new ResourceNotFoundException("ThirdParty", dto.getThirdPartyId()));
 
-            if (!thirdParty.getActive()) {
+            if (!Boolean.TRUE.equals(thirdParty.getActive())
+                    && !keptInactiveThirdPartyIds.contains(thirdParty.getId())) {
                 throw new InvalidOperationException(
-                        String.format("Third Party %s is inactive and cannot be used.", thirdParty.getLegalDisplayName())
+                        String.format("Third Party %s is inactive and cannot be used.", thirdParty.getLegalDisplayName()),
+                        "THIRD_PARTY_INACTIVE"
                 );
             }
 
