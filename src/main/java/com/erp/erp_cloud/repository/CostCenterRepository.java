@@ -60,13 +60,6 @@ public interface CostCenterRepository extends JpaRepository<CostCenter, Long> {
     // Retrieves direct children of a specific parent cost center
     List<CostCenter> findByParentId(Long parentId);
 
-    /**
-     * Tenant-scoped children lookup (audit 2026-11-02, finding C3).
-     * GET /cost-centers/{parentId}/children must never use the unscoped
-     * findByParentId above, which returned other companies' centers.
-     */
-    List<CostCenter> findByCompanyIdAndParentId(Long companyId, Long parentId);
-
     boolean existsByParentId(Long parentId);
 
     boolean existsByParentAndActiveTrue(CostCenter costCenter);
