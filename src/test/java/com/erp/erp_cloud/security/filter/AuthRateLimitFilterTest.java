@@ -15,7 +15,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AuthRateLimitFilterTest {
 
     private AuthRateLimitFilter filter(int loginPerMinute) {
-        return new AuthRateLimitFilter(new ObjectMapper(), true, loginPerMinute, 20, false);
+        // findAndRegisterModules(): ApiResponse carries an Instant timestamp; the
+        // ObjectMapper Spring injects in production already has JavaTimeModule.
+        return new AuthRateLimitFilter(new ObjectMapper().findAndRegisterModules(), true, loginPerMinute, 20, false);
     }
 
     @Test
