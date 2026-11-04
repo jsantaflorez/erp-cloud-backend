@@ -240,15 +240,14 @@ public class ThirdPartyService extends TenantAwareService {
 
         ThirdParty tp = findEntityById(id);
 
-        // Check if third party has any journal entry movements
-        if (journalEntryRepository.existsByThirdParty(tp)) {
-            throw new InvalidOperationException(
-                    String.format("Cannot deactivate third party '%s' because it has accounting movements. " +
-                                    "Contact your administrator if you need to archive this record.",
-                            tp.getLegalDisplayName())
-            );
-        }
-
+        // BUSINESS RULE (2026-11-04): deactivating is a LOGICAL deactivation and
+        // is allowed even when the third party has accounting movements -- it
+        // only stops the record from being used in NEW documents
+        // (JournalEntryService.handleThirdParty rejects inactive third parties).
+        // Its history stays intact: existing entries and reports keep pointing
+        // to it. PHYSICAL deletion is never offered (no DELETE endpoint), and
+        // the database also rejects it while any line references the record
+        // (fk_jei_tenant_third_party, no ON DELETE CASCADE).
         tp.setActive(false);
         thirdPartyRepository.save(tp);
 
@@ -282,7 +281,8 @@ public class ThirdPartyService extends TenantAwareService {
         if (cleanNit.length() > primes.length) {
             log.error("NIT overflow: {} exceeds maximum calculation length of 15", cleanNit);
             throw new InvalidOperationException(
-                    "The document number is too long for Verification Digit (DV) calculation. Max 15 digits allowed."
+                    "The document number is too long for Verification Digit (DV) calculation. Max 15 digits allowed.",
+                    "DOCUMENT_NUMBER_TOO_LONG"
             );
         }
 
@@ -322,12 +322,12 @@ public class ThirdPartyService extends TenantAwareService {
         // Box 35 & Names: LEGAL IDENTIFICATION
         if ("JURIDICA".equals(request.getPersonType()) || "LEGAL".equals(request.getPersonType())) {
             if (request.getBusinessName() == null || request.getBusinessName().trim().isEmpty()) {
-                throw new InvalidOperationException("Business name (Razón Social) is required for legal entities.");
+                throw new InvalidOperationException("Business name (Razón Social) is required for legal entities.", "BUSINESS_NAME_REQUIRED");
             }
             entity.setBusinessName(request.getBusinessName().trim().toUpperCase());
         } else if ("NATURAL".equals(request.getPersonType())) {
             if (request.getFirstName() == null || request.getLastName() == null) {
-                throw new InvalidOperationException("First and Last names are required for natural persons.");
+                throw new InvalidOperationException("First and Last names are required for natural persons.", "NAMES_REQUIRED_FOR_NATURAL");
             }
             entity.setFirstName(request.getFirstName().trim().toUpperCase());
             entity.setMiddleName(request.getMiddleName() != null ? request.getMiddleName().trim().toUpperCase() : null);
@@ -367,7 +367,8 @@ public class ThirdPartyService extends TenantAwareService {
                     .filter(c -> c.getCompany().getId().equals(companyId))
                     .filter(CostCenter::isAllowsMovement)
                     .orElseThrow(() -> new InvalidOperationException(
-                            "Invalid Cost Center: Either not found, doesn't belong to company, or doesn't allow movements."
+                            "Invalid Cost Center: Either not found, doesn't belong to company, or doesn't allow movements.",
+                            "INVALID_COST_CENTER"
                     ));
             entity.setDefaultCostCenter(cc);
         } else {

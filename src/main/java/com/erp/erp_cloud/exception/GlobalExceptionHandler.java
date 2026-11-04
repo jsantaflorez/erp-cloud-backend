@@ -110,9 +110,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(org.springframework.security.authentication.LockedException.class)
     public ResponseEntity<ApiResponse<Void>> handleLockedException(org.springframework.security.authentication.LockedException ex, HttpServletRequest request) {
         log.warn("Access Denied | Account is temporarily locked: {}", ex.getMessage());
+        // Stable code (2026-11-04): the Login screen translates it to the active
+        // language. Before, it was the same English text as a wrong password.
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
-                .body(buildError("Unauthorized identity criteria match rejected.", request));
+                .body(buildError("ACCOUNT_LOCKED", request));
     }
 
     @ExceptionHandler({
@@ -122,9 +124,11 @@ public class GlobalExceptionHandler {
     })
     public ResponseEntity<ApiResponse<Void>> handleAuthenticationExceptions(Exception ex, HttpServletRequest request) {
         log.warn("Authentication entry rejected | Security Reason: {}", ex.getMessage());
+        // One generic code for unknown user, wrong password and inactive user
+        // (no account enumeration); translated by the Login screen.
         return ResponseEntity
                 .status(HttpStatus.UNAUTHORIZED)
-                .body(buildError("Unauthorized identity criteria match rejected.", request));
+                .body(buildError("INVALID_CREDENTIALS", request));
     }
 
     // ═══════════════════════════════════════════════════════════

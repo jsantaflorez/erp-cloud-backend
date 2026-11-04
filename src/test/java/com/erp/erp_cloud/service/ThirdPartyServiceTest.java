@@ -229,8 +229,8 @@ class ThirdPartyServiceTest {
     // ============================================================
 
     @Test
-    @DisplayName("deactivate() refuses a third party with existing accounting movements")
-    void deactivate_thirdPartyWithAccountingMovements_throws() {
+    @DisplayName("deactivate() is allowed for a third party WITH accounting movements (logical deactivation, history kept)")
+    void deactivate_thirdPartyWithAccountingMovements_succeeds() {
         ThirdParty existing = new ThirdParty();
         existing.setId(10L);
         existing.setCompany(testCompany);
@@ -239,9 +239,10 @@ class ThirdPartyServiceTest {
         when(thirdPartyRepository.findById(10L)).thenReturn(Optional.of(existing));
         when(journalEntryRepository.existsByThirdParty(existing)).thenReturn(true);
 
-        assertThatThrownBy(() -> thirdPartyService.deactivate(10L))
-                .isInstanceOf(InvalidOperationException.class)
-                .hasMessageContaining("accounting movements");
+        thirdPartyService.deactivate(10L);
+
+        assertThat(existing.getActive()).isFalse();
+        verify(thirdPartyRepository).save(existing);
     }
 
     @Test
