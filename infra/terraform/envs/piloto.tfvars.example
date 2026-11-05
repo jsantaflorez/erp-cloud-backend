@@ -1,0 +1,11 @@
+# Copy to envs/piloto.tfvars (git-ignored) and fill in.
+project_id      = "erp-cloud-piloto"
+billing_account = "XXXXXX-XXXXXX-XXXXXX"
+alert_email     = "jsantaflorez@gmail.com"
+
+# Pending decisions (see arquitectura-cloud-piloto-2026-11-05):
+region               = "us-east1"
+cors_allowed_origins = "https://app.tu-dominio.com"
+
+# Match the local MySQL version: docker exec mysql_erp mysql --version
+db_version = "MYSQL_8_0"

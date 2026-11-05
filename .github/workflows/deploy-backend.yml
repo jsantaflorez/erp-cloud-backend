@@ -1,0 +1,92 @@
+# Deploy of the backend to the cloud pilot.
+#
+#   test -> build & push image -> BACKUP (layer 2) -> Flyway migration job -> update service
+#
+# Manual trigger on purpose until the production branch is decided
+# (arquitectura-cloud-piloto-2026-11-05, pending decision 3).
+# Repository variables (Settings > Secrets and variables > Actions > Variables),
+# values from `terraform output`:
+#   GCP_PROJECT_ID, GCP_REGION, WIF_PROVIDER, CI_SERVICE_ACCOUNT, AR_REPOSITORY, SQL_INSTANCE
+name: Deploy backend (piloto)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root
+          MYSQL_DATABASE: erpdb
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-root"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      # Flyway builds the schema from V1__baseline.sql on the empty CI database.
+      DB_URL: jdbc:mysql://127.0.0.1:3306/erpdb?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+      DB_USERNAME: root
+      DB_PASSWORD: ci-root
+      JWT_SECRET: ci-only-jwt-secret-not-used-anywhere-else-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - run: chmod +x gradlew && ./gradlew --no-daemon test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: piloto
+    env:
+      REGION: ${{ vars.GCP_REGION }}
+      IMAGE: ${{ vars.AR_REPOSITORY }}/erp-backend:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build and push image
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      # BACKUP LAYER 2: Flyway migrates the schema in the next step; this
+      # backup is the exact point to return to if a migration goes wrong.
+      - name: Backup before deploy
+        run: |
+          gcloud sql backups create \
+            --instance="${{ vars.SQL_INSTANCE }}" \
+            --description="pre-deploy ${GITHUB_SHA::7} run ${GITHUB_RUN_ID}"
+
+      - name: Run Flyway migrations
+        run: |
+          gcloud run jobs update erp-db-migrate --image="$IMAGE" --region="$REGION" --quiet
+          gcloud run jobs execute erp-db-migrate --region="$REGION" --wait
+
+      - name: Deploy service
+        run: |
+          gcloud run services update erp-backend --image="$IMAGE" --region="$REGION" --quiet
+          gcloud run jobs update erp-restore-check --image="$IMAGE" --region="$REGION" --quiet

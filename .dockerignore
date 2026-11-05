@@ -1,0 +1,13 @@
+# Never send local secrets or build output into the image build context.
+application-local.properties
+.git/
+.gradle/
+.idea/
+build/
+data/
+_to_delete/
+AccountTemplates/
+infra/
+*.sql.gz
+*.sql.gz.sha256
+backups/

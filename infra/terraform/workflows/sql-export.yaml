@@ -1,0 +1,26 @@
+# BACKUP LAYER 3 -- daily logical export of erpdb to Cloud Storage.
+# Triggered by Cloud Scheduler (backup.tf). Rendered by Terraform templatefile():
+# Double-dollar expressions below are Workflows expressions; single-dollar ones are Terraform values.
+main:
+  steps:
+    - init:
+        assign:
+          - project: $${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - stamp: $${text.replace_all(text.substring(time.format(sys.now()), 0, 19), ":", "")}
+          - uri: $${"gs://${bucket}/daily/${database}-" + stamp + ".sql.gz"}
+    # The connector waits for the long-running export operation; if the export
+    # fails the execution fails, which fires the alert in backup.tf.
+    - export:
+        call: googleapis.sqladmin.v1.instances.export
+        args:
+          project: $${project}
+          instance: ${instance}
+          body:
+            exportContext:
+              kind: sql#exportContext
+              fileType: SQL
+              uri: $${uri}
+              databases: ["${database}"]
+        result: operation
+    - done:
+        return: $${uri}
