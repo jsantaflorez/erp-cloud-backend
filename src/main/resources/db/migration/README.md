@@ -1,7 +1,9 @@
 # Migraciones de esquema (Flyway)
 
-Auditoría pre-producción 2026-11-02, hallazgo A3. Flyway queda **apagado por
-defecto** (`FLYWAY_ENABLED=false`) hasta que exista el baseline `V1`.
+Auditoría pre-producción 2026-11-02, hallazgo A3. **Activo desde 2026-11-05**:
+`V1__baseline.sql` generado desde `erpdb` (23 tablas + catálogos countries,
+cities, chart_account_templates, permissions), probado en una base vacía y la
+base local `erpdb` ya quedó registrada como versión 1.
 
 ## 1. Generar el baseline V1 (una sola vez)
 
