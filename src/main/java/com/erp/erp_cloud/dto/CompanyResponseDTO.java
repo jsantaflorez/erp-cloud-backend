@@ -31,4 +31,30 @@ public class CompanyResponseDTO {
     private Long defaultLossAccountId;
     private String defaultLossAccountCode;
     private String defaultLossAccountName;
+
+    // NEW (2026-11-09): display-only context for the new "Datos de la
+    // Empresa" admin screen -- this DTO never had anywhere to show
+    // which company you're editing beyond its name. Not editable from
+    // that screen (or any screen yet); still provisioned directly in
+    // the database, same as CompanyService's own class javadoc says.
+    private String taxId;
+    private String verificationDigit;
+    private String address;
+    private String cityName;
+
+    // NEW (2026-11-09): logo + signature-block settings, see
+    // claude/progreso-2026-11-09.md and Company.java. logoDataUrl is a
+    // self-contained "data:image/...;base64,..." string, never a
+    // hosted URL -- the frontend can drop it straight into an <img src>
+    // with no separate fetch. Null in any signer field just means that
+    // slot (or sub-field) was never configured.
+    private String logoDataUrl;
+    private String signer1Name;
+    private String signer1Role;
+    private String signer1IdNumber;
+    private String signer1ProfessionalLicense;
+    private String signer2Name;
+    private String signer2Role;
+    private String signer2IdNumber;
+    private String signer2ProfessionalLicense;
 }

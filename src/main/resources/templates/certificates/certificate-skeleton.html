@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<style>
+  @page { size: letter; margin: 2cm; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; color: #1f2937; font-size: 11pt; line-height: 1.5; }
+
+  /* 2026-11-10: SIN flexbox. openhtmltopdf (el motor HTML->PDF) solo
+     soporta CSS 2.1: display:flex se ignoraba y las firmas, el encabezado
+     y los recuadros de las partes salían uno debajo del otro. Todo lo que
+     va lado a lado usa tablas de maquetación (.layout). */
+  table.layout { width: 100%; border-collapse: separate; border-spacing: 0; }
+  table.layout td { vertical-align: top; padding: 0; }
+
+  .header { border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 14px; }
+  .header .logo img { max-height: 48px; max-width: 200px; }
+  .header .issue { text-align: right; font-size: 9pt; color: #64748b; padding-top: 4px; }
+
+  h1.title { font-size: 13pt; letter-spacing: 0.04em; text-transform: uppercase; text-align: center; margin: 4px 0 2px; color: #0f172a; }
+  .title-sub { text-align: center; font-size: 10pt; letter-spacing: 0.04em; color: #475569; margin: 0 0 18px; }
+
+  table.parties { margin-bottom: 18px; }
+  table.parties td { width: 50%; }
+  table.parties td:first-child { padding-right: 7px; }
+  table.parties td + td { padding-left: 7px; }
+  .party { border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+  .party h2 { margin: 0; padding: 5px 10px; font-size: 9pt; letter-spacing: 0.04em; text-transform: uppercase; background: #0f172a; color: #ffffff; }
+  .party dl { margin: 0; padding: 8px 10px; }
+  .party dt { font-size: 8pt; text-transform: uppercase; color: #64748b; margin-top: 4px; }
+  .party dt:first-child { margin-top: 0; }
+  .party dd { margin: 0 0 2px; font-size: 10pt; color: #1f2937; }
+
+  .body-text p { margin: 0 0 10px; text-align: justify; }
+
+  table.lines { width: 100%; border-collapse: collapse; margin: 14px 0 16px; }
+  table.lines th, table.lines td { border: 1px solid #e2e8f0; padding: 6px 9px; font-size: 9pt; }
+  table.lines th { background: #f1f5f9; text-align: left; color: #334155; }
+  table.lines td.num, table.lines th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.lines tfoot td { font-weight: 700; background: #f8fafc; }
+
+  .footer-text { margin-top: 18px; font-size: 9pt; color: #475569; }
+
+  /* Firmas lado a lado; el bloque nunca se parte entre dos páginas. */
+  table.signatures { margin-top: 56px; page-break-inside: avoid; }
+  table.signatures td { width: 50%; text-align: center; vertical-align: top; padding: 0 18px; }
+  table.signatures td.single { width: 100%; }
+  .signature-line { width: 240px; margin: 0 auto; text-align: center; }
+  table.lines tr { page-break-inside: avoid; }
+  .signature-line .rule { border-top: 1px solid #334155; margin-bottom: 4px; }
+  .signature-line .signer-name { font-weight: 700; }
+  .signature-line .signer-role { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.03em; color: #475569; }
+  .signature-line .signer-meta { font-size: 8pt; color: #64748b; }
+</style>
+</head>
+<body>
+  <table class="layout header">
+    <tr>
+      <td class="logo">{{#has_logo}}<img src="{{company_logo}}" alt="{{company_name}}"/>{{/has_logo}}</td>
+      <td class="issue">{{issue_city}}, {{issue_date}}</td>
+    </tr>
+  </table>
+
+  <h1 class="title">{{resolved_document_title}}</h1>
+  <div class="title-sub">AÑO GRAVABLE {{tax_year}}</div>
+
+  <table class="layout parties">
+    <tr>
+    <td><div class="party">
+      <h2>Agente Retenedor</h2>
+      <dl>
+        <dt>Razón Social</dt><dd>{{company_name}}</dd>
+        <dt>NIT</dt><dd>{{company_nit}}</dd>
+        {{#company_address}}<dt>Dirección</dt><dd>{{company_address}}{{#company_city}}, {{company_city}}{{/company_city}}</dd>{{/company_address}}
+      </dl>
+    </div></td>
+    <td><div class="party">
+      <h2>Sujeto de Retención</h2>
+      <dl>
+        <dt>Nombre / Razón Social</dt><dd>{{third_party_name}}</dd>
+        <dt>NIT</dt><dd>{{third_party_nit}}</dd>
+      </dl>
+    </div></td>
+    </tr>
+  </table>
+
+  <div class="body-text">{{{resolved_body}}}</div>
+
+  <table class="lines">
+    <thead>
+      <tr>
+        <th>Concepto de Retención</th>
+        <th class="num">Base Retención</th>
+        <th class="num">Porcentaje (%)</th>
+        <th class="num">Valor Retenido</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{! 2026-11-10: una fila por CONCEPTO (impuesto + tarifa), con base y
+          valor sumados. Antes: una fila por movimiento mostrando la
+          descripción de la línea contable (solía ser el nombre del tercero). }}
+      {{#concept_lines}}
+      <tr>
+        <td>{{concept}}</td>
+        <td class="num">{{base}}</td>
+        <td class="num">{{rate}}</td>
+        <td class="num">{{value}}</td>
+      </tr>
+      {{/concept_lines}}
+      {{^has_concept_lines}}
+      <tr><td colspan="4">Sin movimientos.</td></tr>
+      {{/has_concept_lines}}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>TOTAL</td>
+        <td class="num">{{total_base}}</td>
+        <td></td>
+        <td class="num">{{total_withheld}}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="footer-text">{{{resolved_footer}}}</div>
+
+  <table class="layout signatures">
+    <tr>
+    {{#has_signer1}}
+    <td class="{{^has_signer2}}single{{/has_signer2}}"><div class="signature-line">
+      <div class="rule"></div>
+      <div class="signer-name">{{signer1_name}}</div>
+      {{#signer1_role}}<div class="signer-role">{{signer1_role}}</div>{{/signer1_role}}
+      {{#has_signer1_id}}<div class="signer-meta">C.C. {{signer1_id_number}}</div>{{/has_signer1_id}}
+      {{#has_signer1_license}}<div class="signer-meta">T.P. {{signer1_professional_license}}</div>{{/has_signer1_license}}
+    </div></td>
+    {{/has_signer1}}
+    {{#has_signer2}}
+    <td class="{{^has_signer1}}single{{/has_signer1}}"><div class="signature-line">
+      <div class="rule"></div>
+      <div class="signer-name">{{signer2_name}}</div>
+      {{#signer2_role}}<div class="signer-role">{{signer2_role}}</div>{{/signer2_role}}
+      {{#has_signer2_id}}<div class="signer-meta">C.C. {{signer2_id_number}}</div>{{/has_signer2_id}}
+      {{#has_signer2_license}}<div class="signer-meta">T.P. {{signer2_professional_license}}</div>{{/has_signer2_license}}
+    </div></td>
+    {{/has_signer2}}
+    {{^has_any_signer}}
+    <td><div class="signature-line"><div class="rule"></div>REPRESENTANTE LEGAL</div></td>
+    <td><div class="signature-line"><div class="rule"></div>CONTADOR</div></td>
+    {{/has_any_signer}}
+    </tr>
+  </table>
+</body>
+</html>

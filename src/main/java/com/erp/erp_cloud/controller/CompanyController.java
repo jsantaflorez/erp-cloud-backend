@@ -4,6 +4,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import com.erp.erp_cloud.dto.ApiResponse;
 import com.erp.erp_cloud.dto.CompanyClosingDefaultsRequest;
 import com.erp.erp_cloud.dto.CompanyResponseDTO;
+import com.erp.erp_cloud.dto.CompanySignatureSettingsRequest;
 import com.erp.erp_cloud.service.CompanyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,5 +53,26 @@ public class CompanyController {
             @Valid @RequestBody CompanyClosingDefaultsRequest request) {
         CompanyResponseDTO data = companyService.updateClosingDefaults(request);
         return ResponseEntity.ok(new ApiResponse<>("Closing defaults updated", true, data));
+    }
+
+    /**
+     * NEW (2026-11-09): logo + signature-block settings for legal
+     * documents -- see claude/progreso-2026-11-09.md. Company-level
+     * (not per-template), reused by this certificate and any future
+     * legal document that needs the same logo/signers.
+     */
+    // C1 (audit 2026-11-02 pattern): administrators only, same as closing-defaults above
+    @PreAuthorize("@authz.isAdmin()")
+    @PatchMapping("/me/signature-settings")
+    @Operation(
+            summary = "Set logo and signature-block settings",
+            description = "Sets the current tenant's logo (as a data: URI) and up to two named signers " +
+                    "(name/role/id number/professional license) reused by legal documents such as the " +
+                    "Withholding Certificate."
+    )
+    public ResponseEntity<ApiResponse<CompanyResponseDTO>> updateSignatureSettings(
+            @RequestBody CompanySignatureSettingsRequest request) {
+        CompanyResponseDTO data = companyService.updateSignatureSettings(request);
+        return ResponseEntity.ok(new ApiResponse<>("Signature settings updated", true, data));
     }
 }

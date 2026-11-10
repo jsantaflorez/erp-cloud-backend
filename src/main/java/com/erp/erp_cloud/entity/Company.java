@@ -64,9 +64,21 @@ public class Company implements Serializable {
     // LOCATION
     // =====================
 
-
-
-    @ManyToOne(fetch = FetchType.LAZY)
+    // FIX (2026-11-07): same bug class as defaultGainAccount/
+    // defaultLossAccount below -- LAZY here throws
+    // "org.hibernate.LazyInitializationException: could not
+    // initialize proxy [City#n] - no Session" the moment anything
+    // reads company.getCity() outside the one short transaction
+    // TenantResolver.resolve() used to load this Company. Hit in
+    // practice via WithholdingCertificateService.getCertificateData()
+    // (company.getCity().getName() for the certificate's issue
+    // city), but the root cause isn't specific to that caller --
+    // any later @Transactional method that reads city through the
+    // TenantContext-retained Company proxy would hit the same
+    // thing, since that Session is long closed by then. EAGER
+    // loads city as part of TenantResolver's own query, so there
+    // is never a stale proxy to re-initialize.
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "city_id", nullable = false)
     // @Audited(targetAuditMode = RelationTargetAuditMode.NOT_AUDITED)
     private City city;
@@ -96,8 +108,46 @@ public class Company implements Serializable {
     @Builder.Default
     private Boolean active = true;
 
-    @Column(name = "logo_url")
-    private String logoUrl;
+    // Self-contained "data:image/...;base64,..." URI (2026-11-09) --
+    // NOT a hosted http(s) URL. See V5__company_logo_and_signers.sql:
+    // this column used to be a dead, never-written logo_url varchar(255)
+    // -- renamed/retyped rather than left alongside a new column, since
+    // nothing in the codebase ever read or wrote it.
+    @Column(name = "logo_data_url", columnDefinition = "LONGTEXT")
+    private String logoDataUrl;
+
+    // Signature-block settings for legal documents (2026-11-09) -- see
+    // claude/progreso-2026-11-09.md. Company-level, not per-template: a
+    // legal representative/accountant doesn't change between document
+    // types, so it's set once here and every legal-document template
+    // (this certificate, and any future one) reuses the same values.
+    // Two independently-optional slots, not a list -- the spec calls for
+    // "una o dos columnas", never more. Either or both left null falls
+    // back to the original unlabeled "REPRESENTANTE LEGAL"/"CONTADOR"
+    // signature lines in the certificate skeleton.
+    @Column(name = "signer1_name", length = 150)
+    private String signer1Name;
+
+    @Column(name = "signer1_role", length = 100)
+    private String signer1Role;
+
+    @Column(name = "signer1_id_number", length = 30)
+    private String signer1IdNumber;
+
+    @Column(name = "signer1_professional_license", length = 50)
+    private String signer1ProfessionalLicense;
+
+    @Column(name = "signer2_name", length = 150)
+    private String signer2Name;
+
+    @Column(name = "signer2_role", length = 100)
+    private String signer2Role;
+
+    @Column(name = "signer2_id_number", length = 30)
+    private String signer2IdNumber;
+
+    @Column(name = "signer2_professional_license", length = 50)
+    private String signer2ProfessionalLicense;
 
     // =====================
     // ACCOUNTING

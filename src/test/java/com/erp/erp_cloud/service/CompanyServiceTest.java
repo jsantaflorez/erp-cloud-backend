@@ -2,6 +2,7 @@ package com.erp.erp_cloud.service;
 
 import com.erp.erp_cloud.dto.CompanyClosingDefaultsRequest;
 import com.erp.erp_cloud.dto.CompanyResponseDTO;
+import com.erp.erp_cloud.dto.CompanySignatureSettingsRequest;
 import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.enums.AccountClass;
@@ -74,6 +75,26 @@ class CompanyServiceTest {
         assertThat(result.getLegalName()).isEqualTo("Comercializadora Andina S.A.S.");
         assertThat(result.getTradeName()).isEqualTo("Andina");
         assertThat(result.getChartTemplate()).isEqualTo("COMERCIAL");
+    }
+
+    @Test
+    @DisplayName("getCurrentCompany maps the logo and both signer slots when configured")
+    void getCurrentCompany_withSignatureSettings_mapsThem() {
+        Company company = new Company();
+        company.setId(COMPANY_ID);
+        company.setLogoDataUrl("data:image/png;base64,AAAA");
+        company.setSigner1Name("JUAN PEREZ");
+        company.setSigner1Role("Representante Legal");
+        company.setSigner2Name("MARIA GOMEZ");
+        company.setSigner2Role("Contador");
+        company.setSigner2ProfessionalLicense("123456-T");
+        TenantContext.setContext(company);
+
+        CompanyResponseDTO result = service.getCurrentCompany();
+
+        assertThat(result.getLogoDataUrl()).isEqualTo("data:image/png;base64,AAAA");
+        assertThat(result.getSigner1Name()).isEqualTo("JUAN PEREZ");
+        assertThat(result.getSigner2ProfessionalLicense()).isEqualTo("123456-T");
     }
 
     @Test
@@ -169,6 +190,92 @@ class CompanyServiceTest {
 
         assertThat(result.getId()).isEqualTo(COMPANY_ID);
         verify(companyRepository).save(any(Company.class));
+    }
+
+    // ============================================================
+    // updateSignatureSettings() -- NEW (2026-11-09): logo + up to two
+    // named signers, see claude/progreso-2026-11-09.md. Company-level
+    // (not per legal-document template), reused by this certificate
+    // and any future legal document.
+    // ============================================================
+
+    @Test
+    @DisplayName("updateSignatureSettings() rejects a logo that isn't an embedded data: image")
+    void updateSignatureSettings_invalidLogoFormat_throws() {
+        Company company = new Company();
+        company.setId(COMPANY_ID);
+        TenantContext.setContext(company);
+        when(companyRepository.findById(COMPANY_ID)).thenReturn(Optional.of(company));
+
+        CompanySignatureSettingsRequest request = new CompanySignatureSettingsRequest();
+        request.setLogoDataUrl("https://example.com/logo.png");
+
+        assertThatThrownBy(() -> service.updateSignatureSettings(request))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("INVALID_LOGO_FORMAT"));
+
+        verify(companyRepository, never()).save(any(Company.class));
+    }
+
+    @Test
+    @DisplayName("updateSignatureSettings() rejects a logo data URI over the size limit")
+    void updateSignatureSettings_logoTooLarge_throws() {
+        Company company = new Company();
+        company.setId(COMPANY_ID);
+        TenantContext.setContext(company);
+        when(companyRepository.findById(COMPANY_ID)).thenReturn(Optional.of(company));
+
+        String oversized = "data:image/png;base64," + "A".repeat(400_000);
+        CompanySignatureSettingsRequest request = new CompanySignatureSettingsRequest();
+        request.setLogoDataUrl(oversized);
+
+        assertThatThrownBy(() -> service.updateSignatureSettings(request))
+                .isInstanceOf(InvalidOperationException.class)
+                .satisfies(ex -> assertThat(((InvalidOperationException) ex).getErrorCode())
+                        .isEqualTo("LOGO_TOO_LARGE"));
+
+        verify(companyRepository, never()).save(any(Company.class));
+    }
+
+    @Test
+    @DisplayName("updateSignatureSettings() saves a valid logo and both signers, and normalizes blank fields to null")
+    void updateSignatureSettings_validInput_savesAndNormalizesBlanks() {
+        Company company = new Company();
+        company.setId(COMPANY_ID);
+        TenantContext.setContext(company);
+        when(companyRepository.findById(COMPANY_ID)).thenReturn(Optional.of(company));
+        when(companyRepository.save(any(Company.class))).thenReturn(company);
+
+        CompanySignatureSettingsRequest request = new CompanySignatureSettingsRequest();
+        request.setLogoDataUrl("data:image/png;base64,AAAA");
+        request.setSigner1Name("JUAN PEREZ");
+        request.setSigner1Role("Representante Legal");
+        request.setSigner1IdNumber("  "); // blank on purpose -- must normalize to null, not "  "
+        request.setSigner2Name(null);
+
+        service.updateSignatureSettings(request);
+
+        assertThat(company.getLogoDataUrl()).isEqualTo("data:image/png;base64,AAAA");
+        assertThat(company.getSigner1Name()).isEqualTo("JUAN PEREZ");
+        assertThat(company.getSigner1IdNumber()).isNull();
+        assertThat(company.getSigner2Name()).isNull();
+        verify(companyRepository).save(any(Company.class));
+    }
+
+    @Test
+    @DisplayName("updateSignatureSettings() allows clearing an existing logo by sending null")
+    void updateSignatureSettings_nullLogo_clearsExisting() {
+        Company company = new Company();
+        company.setId(COMPANY_ID);
+        company.setLogoDataUrl("data:image/png;base64,OLD");
+        TenantContext.setContext(company);
+        when(companyRepository.findById(COMPANY_ID)).thenReturn(Optional.of(company));
+        when(companyRepository.save(any(Company.class))).thenReturn(company);
+
+        service.updateSignatureSettings(new CompanySignatureSettingsRequest());
+
+        assertThat(company.getLogoDataUrl()).isNull();
     }
 
     private ChartOfAccounts equityAccount(Long id, String code) {

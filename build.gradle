@@ -73,5 +73,15 @@ dependencies {
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.5'
+
+	// Withholding certificates (2026-11-07): Mustache resolves {{variable}} legal
+	// text templates stored per-company in legal_document_templates; openhtmltopdf
+	// converts the resolved HTML (shared by the preview endpoint and the final PDF)
+	// into the downloadable PDF. First server-side PDF generation in this backend --
+	// every export before this was client-side jsPDF in the frontend.
+	implementation 'com.github.spullara.mustache.java:compiler:0.9.14'
+	implementation 'io.github.openhtmltopdf:openhtmltopdf-core:1.1.30'
+	implementation 'io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.30'
+	implementation 'io.github.openhtmltopdf:openhtmltopdf-slf4j:1.1.30'
 }
 
