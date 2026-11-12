@@ -17,6 +17,13 @@ import java.util.List;
                 @UniqueConstraint(
                         name = "uk_company_doctype_consecutive_active",
                         columnNames = {"company_id", "document_type_id", "consecutive", "is_active"}
+                ),
+                // V6 (2026-11-12): unique PER COMPANY. It used to be a global
+                // @Column(unique = true), so two companies with the same
+                // prefix collided on "FV-1".
+                @UniqueConstraint(
+                        name = "uk_journal_entries_company_docnum",
+                        columnNames = {"company_id", "document_number"}
                 )
         },
         indexes = {
@@ -49,7 +56,7 @@ public class  JournalEntry extends BaseEntity implements Serializable {
     @Column(nullable = false)
     private Long consecutive; // The number assigned from DocumentType.current_consecutive
 
-    @Column(nullable = false, length = 20, unique = true)
+    @Column(nullable = false, length = 20)
     private String documentNumber;
 
     @Column(length = 255)
