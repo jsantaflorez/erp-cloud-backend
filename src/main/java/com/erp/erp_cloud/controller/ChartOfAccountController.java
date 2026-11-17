@@ -35,6 +35,7 @@ public class ChartOfAccountController {
     private final ChartOfAccountService chartOfAccountService;
     private final ChartAccountTemplateImportService chartAccountTemplateImportService;
     private final com.erp.erp_cloud.service.SiewinPucImportService siewinPucImportService;
+    private final com.erp.erp_cloud.service.ChartOfAccountResetService chartOfAccountResetService;
 
     /**
      * Create a new account entry.
@@ -102,6 +103,36 @@ public class ChartOfAccountController {
             @RequestBody com.erp.erp_cloud.dto.SiewinPucImportRequest request) {
         com.erp.erp_cloud.dto.SiewinPucImportResultDTO result = siewinPucImportService.importFromSiewin(request);
         return ResponseEntity.ok(new ApiResponse<>("SIEWIN PUC imported successfully", true, result));
+    }
+
+    /**
+     * NEW (2026-11-17): what deleting the whole chart of accounts would do,
+     * and whether it is allowed (only while nothing is recorded against
+     * the accounts). See ChartOfAccountResetService.
+     */
+    @PreAuthorize("@authz.isAdmin()")
+    @GetMapping("/reset-preview")
+    @Operation(summary = "Preview a full chart-of-accounts reset for the current company")
+    public ResponseEntity<ApiResponse<com.erp.erp_cloud.dto.ChartOfAccountResetPreviewDTO>> resetPreview() {
+        return ResponseEntity.ok(new ApiResponse<>("Reset preview", true, chartOfAccountResetService.preview()));
+    }
+
+    /**
+     * NEW (2026-11-17): deletes the whole chart of accounts of the current
+     * company so it can be imported again. Requires {"confirmation":"BORRAR"}
+     * and fails with CHART_OF_ACCOUNTS_RESET_BLOCKED (details = reasons) if
+     * any entry, opening balance or closed period uses the accounts.
+     */
+    @PreAuthorize("@authz.isAdmin()")
+    @PostMapping("/reset")
+    @Operation(summary = "Delete the whole chart of accounts (only while it has no movements)")
+    public ResponseEntity<ApiResponse<com.erp.erp_cloud.dto.ChartOfAccountResetResultDTO>> reset(
+            @RequestBody com.erp.erp_cloud.dto.ChartOfAccountResetRequest request) {
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        String username = auth == null ? "?" : auth.getName();
+        return ResponseEntity.ok(new ApiResponse<>("Chart of accounts deleted", true,
+                chartOfAccountResetService.reset(request, username)));
     }
 
     /**
