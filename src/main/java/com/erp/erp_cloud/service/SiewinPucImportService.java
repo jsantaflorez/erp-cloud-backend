@@ -4,6 +4,7 @@ import com.erp.erp_cloud.dto.ChartOfAccountRequest;
 import com.erp.erp_cloud.dto.SiewinPucImportRequest;
 import com.erp.erp_cloud.dto.SiewinPucImportResultDTO;
 import com.erp.erp_cloud.dto.SiewinPucRowDTO;
+import com.erp.erp_cloud.entity.ChartOfAccounts;
 import com.erp.erp_cloud.entity.Company;
 import com.erp.erp_cloud.enums.AccountCategory;
 import com.erp.erp_cloud.enums.AccountClass;
@@ -70,7 +71,13 @@ import java.util.TreeSet;
  * 5. PRECONDITION -- same as Fase 4's "Importar PUC Estandar": only
  *    allowed while ChartOfAccounts is completely empty for this company
  *    (CHART_OF_ACCOUNTS_NOT_EMPTY, same error code, reused on purpose).
- *    No merge-into-a-non-empty-plan mode exists.
+ *    UPDATE 2026-11-17: new opt-in mode ADD_MISSING (see
+ *    SiewinPucImportRequest) for a company that already has a plan --
+ *    the full, current SIEWIN PUC is re-uploaded and only the codes that
+ *    don't exist yet are created; existing accounts (active or inactive)
+ *    are never modified. Covers the real case where the client kept
+ *    working in SIEWIN after the first migration and the opening-balance
+ *    file no longer matches the plan.
  *
  * ---------------------------------------------------------------------
  * Reused from ChartAccountTemplateImportService without a redesign (see
@@ -246,14 +253,24 @@ public class SiewinPucImportService extends TenantAwareService {
                 .orElseThrow(() -> new InvalidOperationException(
                         "Company not found for the current session.", "COMPANY_NOT_FOUND"));
 
-        // Decision 5 (2026-10-31, approved): same precondition as Fase 4 --
-        // no merge-into-a-non-empty-plan mode exists.
-        if (chartOfAccountsRepository.existsByCompanyId(companyId)) {
+        // Decision 5 (2026-10-31, approved): same precondition as Fase 4
+        // for a full import. UPDATE 2026-11-17: ADD_MISSING mode skips it
+        // and only adds the codes the plan doesn't have yet.
+        boolean addMissing = request != null && request.isAddMissing();
+        if (!addMissing && chartOfAccountsRepository.existsByCompanyId(companyId)) {
             throw new InvalidOperationException(
                     "El Plan de Cuentas ya tiene cuentas registradas. " +
-                            "La importacion desde SIEWIN solo esta disponible con el plan vacio.",
+                            "Use la opcion \"Agregar cuentas nuevas\" para traer solo las cuentas que faltan.",
                     "CHART_OF_ACCOUNTS_NOT_EMPTY"
             );
+        }
+        // Existing plan, by code (active AND inactive -- an inactive code
+        // still exists, so it is never re-created). Empty for a full import.
+        Map<String, ChartOfAccounts> existingByCode = new HashMap<>();
+        if (addMissing) {
+            for (ChartOfAccounts a : chartOfAccountsRepository.findByCompanyIdOrderByCodeAsc(companyId)) {
+                existingByCode.put(a.getCode(), a);
+            }
         }
 
         List<SiewinPucRowDTO> rows = request == null ? null : request.rows();
@@ -357,14 +374,46 @@ public class SiewinPucImportService extends TenantAwareService {
         // ── Pass 3: category coverage (collected upfront, not thrown per-row) ──
         List<String> unmappedGroups = new ArrayList<>();
         for (DerivedRow d : byCode.values()) {
+            if (existingByCode.containsKey(d.code())) {
+                continue; // ADD_MISSING: an existing account is never re-created, its category doesn't matter here
+            }
             if (lookupCategory(d.code()) == null) {
                 unmappedGroups.add(d.code() + " - " + d.row().nombre());
             }
         }
 
+        // ── Pass 4 (ADD_MISSING only): new codes vs. the existing plan ───
+        // A new account can't hang from an existing posting account (the
+        // ERP never allows children on a posting account -- see
+        // ChartOfAccountService.create()) nor from an inactive one.
+        // Reported up front instead of failing halfway through the loop.
+        List<String> parentIsPostingInPlan = new ArrayList<>();
+        List<String> parentInactiveInPlan = new ArrayList<>();
+        if (addMissing) {
+            for (DerivedRow d : byCode.values()) {
+                if (existingByCode.containsKey(d.code())) {
+                    continue;
+                }
+                String parentCode = parentCodeOf(d.code());
+                ChartOfAccounts existingParent = parentCode == null ? null : existingByCode.get(parentCode);
+                if (existingParent == null) {
+                    continue; // parent is new too (created first) or a root to synthesize
+                }
+                String label = d.code() + " - " + d.row().nombre();
+                if (existingParent.isPostingAccount()) {
+                    parentIsPostingInPlan.add(label + " (su cuenta padre " + parentCode + " - "
+                            + existingParent.getName() + " es de movimiento en el plan actual)");
+                } else if (!existingParent.isActive()) {
+                    parentInactiveInPlan.add(label + " (su cuenta padre " + parentCode + " - "
+                            + existingParent.getName() + " esta inactiva)");
+                }
+            }
+        }
+
         if (!outOfRangeLevels.isEmpty() || !levelSkipGaps.isEmpty() || !duplicateCodes.isEmpty()
                 || !orphanCodes.isEmpty() || !postingAccountHasChildren.isEmpty()
-                || !missingNames.isEmpty() || !unmappedGroups.isEmpty()) {
+                || !missingNames.isEmpty() || !unmappedGroups.isEmpty()
+                || !parentIsPostingInPlan.isEmpty() || !parentInactiveInPlan.isEmpty()) {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("outOfRangeLevels", outOfRangeLevels);
             details.put("levelSkipGaps", levelSkipGaps);
@@ -373,6 +422,8 @@ public class SiewinPucImportService extends TenantAwareService {
             details.put("postingAccountHasChildren", postingAccountHasChildren);
             details.put("missingNames", missingNames);
             details.put("unmappedGroups", unmappedGroups);
+            details.put("parentIsPostingInPlan", parentIsPostingInPlan);
+            details.put("parentInactiveInPlan", parentInactiveInPlan);
 
             log.error("IMPORT_SIEWIN_INTEGRITY_GAP | tenant: {} | details: {}", companyId, details);
             throw new InvalidOperationException(
@@ -387,9 +438,13 @@ public class SiewinPucImportService extends TenantAwareService {
         }
 
         Map<String, Long> codeToId = new HashMap<>();
+        existingByCode.forEach((code, account) -> codeToId.put(code, account.getId()));
         int created = 0;
         for (char digit : rootDigitsNeeded) {
             String rootCode = String.valueOf(digit);
+            if (existingByCode.containsKey(rootCode)) {
+                continue; // ADD_MISSING: root already in the plan
+            }
             AccountClass accountClass = AccountClass.fromCode(rootCode);
             Long id = createOne(rootCode, ROOT_NAMES.get(digit), accountClass,
                     CLASS_DEFAULT_CATEGORY.get(accountClass),
@@ -403,7 +458,12 @@ public class SiewinPucImportService extends TenantAwareService {
         orderedCodes.sort(Comparator.comparingInt(String::length).thenComparing(Comparator.naturalOrder()));
 
         List<String> truncatedNameWarnings = new ArrayList<>();
+        int alreadyExisting = 0;
         for (String code : orderedCodes) {
+            if (existingByCode.containsKey(code)) {
+                alreadyExisting++; // ADD_MISSING: left untouched
+                continue;
+            }
             DerivedRow d = byCode.get(code);
             String parentCode = parentCodeOf(code);
             Long parentId = codeToId.get(parentCode);
@@ -434,10 +494,11 @@ public class SiewinPucImportService extends TenantAwareService {
             created++;
         }
 
-        log.info("IMPORT_SIEWIN_DONE | tenant: {} | accountsCreated: {} | rootAccountsCreated: {} | truncatedNameWarnings: {}",
-                companyId, created, rootAccountsCreated, truncatedNameWarnings.size());
+        log.info("IMPORT_SIEWIN_DONE | tenant: {} | mode: {} | accountsCreated: {} | rootAccountsCreated: {} | alreadyExisting: {} | truncatedNameWarnings: {}",
+                companyId, addMissing ? "ADD_MISSING" : "FULL", created, rootAccountsCreated, alreadyExisting,
+                truncatedNameWarnings.size());
 
-        return new SiewinPucImportResultDTO(created, rootAccountsCreated, truncatedNameWarnings);
+        return new SiewinPucImportResultDTO(created, rootAccountsCreated, truncatedNameWarnings, alreadyExisting);
     }
 
     /**

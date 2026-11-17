@@ -16,6 +16,10 @@ import java.util.List;
 public record SiewinPucImportResultDTO(
         int accountsCreated,
         int rootAccountsCreated,
-        List<String> truncatedNameWarnings
+        List<String> truncatedNameWarnings,
+        // NEW (2026-11-17): modo "solo agregar cuentas nuevas" -- cuántos
+        // códigos del archivo ya existían en el plan y se dejaron intactos
+        // (0 en una importación completa).
+        int accountsAlreadyExisting
 ) {
 }

@@ -58,6 +58,10 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     // only posting accounts ever receive journal entry items directly).
     List<ChartOfAccounts> findByCompanyIdAndActiveTrueOrderByCodeAsc(Long companyId);
 
+    // NEW (2026-11-17): todo el plan (activas e inactivas), para el modo
+    // "solo agregar cuentas nuevas" del importador de PUC SIEWIN.
+    List<ChartOfAccounts> findByCompanyIdOrderByCodeAsc(Long companyId);
+
     // NEW (2026-10-03): populates the Ganancia/Pérdida account dropdowns on
     // the year-end closing screen. Scoped to EQUITY (class 3) AND
     // postingAccount = true -- explicit user requirement (2026-10-03): the

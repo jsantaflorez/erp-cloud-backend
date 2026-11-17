@@ -91,9 +91,10 @@ public class ChartOfAccountController {
     @Operation(
             summary = "Import a legacy PUC exported from SIEWIN",
             description = "Re-derives account codes from a SIEWIN t_puc_maestro26 export (parsed client-side) " +
-                    "and creates real ChartOfAccounts rows for the current tenant. Only available while the " +
-                    "Plan de Cuentas is empty; fails with every validation problem collected at once if the " +
-                    "source data has any gap, duplicate, orphan or unmapped group."
+                    "and creates real ChartOfAccounts rows for the current tenant. Full import (default) only while the " +
+                    "Plan de Cuentas is empty; mode=ADD_MISSING re-uploads the current PUC on a non-empty plan and " +
+                    "creates only the missing codes, never modifying existing accounts. Fails with every validation " +
+                    "problem collected at once if the source data has any gap, duplicate, orphan or unmapped group."
     )
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "SIEWIN PUC imported successfully")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Plan de Cuentas not empty, empty file, or source data integrity problems")
