@@ -56,6 +56,12 @@ import java.util.TreeSet;
  *    the source file before re-running the import. This also means the
  *    check is generic (any level > 99 on any future client's file), not a
  *    hardcoded exception for this one account.
+ *    UPDATE 2026-11-17 (user decision): SIEWIN numbers its "Varios"
+ *    accounts 9999; that one value now maps to slot 99 (see SiewinCodes),
+ *    listed back in catchAllRemapped. If 99 is already taken by another
+ *    account (in the file or, in ADD_MISSING mode, in the plan) it is
+ *    reported in catchAllCollisions -- never overwritten or renumbered.
+ *    Any other level > 99 is still rejected as outOfRangeLevels.
  *
  * 3. INGESTION FORMAT -- the frontend parses the uploaded .xlsx/.csv (the
  *    `xlsx` library the frontend already depends on) and sends the rows
@@ -320,29 +326,49 @@ public class SiewinPucImportService extends TenantAwareService {
             }
 
             StringBuilder codeBuilder = new StringBuilder();
+            StringBuilder siewinCode = new StringBuilder();
             boolean rowOutOfRange = false;
+            boolean catchAll = false;
             for (int lvl = 0; lvl < depth; lvl++) {
                 int value = levels[lvl];
-                if (value > 99) {
+                String slot = SiewinCodes.levelSlot(value);
+                if (slot == null) {
                     outOfRangeLevels.add(label + " (nivel" + (lvl + 1) + "=" + value + ")");
                     rowOutOfRange = true;
                     break;
                 }
-                codeBuilder.append(String.format("%02d", value));
+                if (value == SiewinCodes.CATCH_ALL_LEVEL) {
+                    catchAll = true;
+                }
+                codeBuilder.append(slot);
+                if (lvl > 0) {
+                    siewinCode.append('-');
+                }
+                siewinCode.append(lvl < 3 ? String.format("%02d", value) : String.format("%04d", value));
             }
             if (rowOutOfRange) {
                 continue;
             }
 
-            derivedRows.add(new DerivedRow(codeBuilder.toString(), row));
+            derivedRows.add(new DerivedRow(codeBuilder.toString(), row, catchAll, siewinCode.toString()));
         }
 
         // ── Pass 2: duplicates, orphans, posting-account-has-children ───
         Map<String, DerivedRow> byCode = new LinkedHashMap<>();
         List<String> duplicateCodes = new ArrayList<>();
+        List<String> catchAllCollisions = new ArrayList<>();
         for (DerivedRow d : derivedRows) {
-            if (byCode.containsKey(d.code())) {
-                duplicateCodes.add(d.code() + " - " + d.row().nombre());
+            DerivedRow other = byCode.get(d.code());
+            if (other != null) {
+                if (d.catchAll() || other.catchAll()) {
+                    DerivedRow varios = d.catchAll() ? d : other;
+                    DerivedRow taken = d.catchAll() ? other : d;
+                    catchAllCollisions.add(varios.siewinCode() + " - " + varios.row().nombre()
+                            + " (se convertiria en " + d.code() + ", que ya usa " + taken.siewinCode()
+                            + " - " + taken.row().nombre() + ")");
+                } else {
+                    duplicateCodes.add(d.code() + " - " + d.row().nombre());
+                }
             } else {
                 byCode.put(d.code(), d);
             }
@@ -391,7 +417,16 @@ public class SiewinPucImportService extends TenantAwareService {
         List<String> parentInactiveInPlan = new ArrayList<>();
         if (addMissing) {
             for (DerivedRow d : byCode.values()) {
-                if (existingByCode.containsKey(d.code())) {
+                ChartOfAccounts sameCode = existingByCode.get(d.code());
+                if (sameCode != null) {
+                    // A "Varios" (9999 -> 99) whose 99 already holds a
+                    // DIFFERENT account in the plan: not the same account,
+                    // so it must not be silently treated as "already exists".
+                    if (d.catchAll() && !sameName(sameCode.getName(), d.row().nombre())) {
+                        catchAllCollisions.add(d.siewinCode() + " - " + d.row().nombre()
+                                + " (se convertiria en " + d.code() + ", que en el plan ya es "
+                                + sameCode.getName() + ")");
+                    }
                     continue;
                 }
                 String parentCode = parentCodeOf(d.code());
@@ -413,7 +448,8 @@ public class SiewinPucImportService extends TenantAwareService {
         if (!outOfRangeLevels.isEmpty() || !levelSkipGaps.isEmpty() || !duplicateCodes.isEmpty()
                 || !orphanCodes.isEmpty() || !postingAccountHasChildren.isEmpty()
                 || !missingNames.isEmpty() || !unmappedGroups.isEmpty()
-                || !parentIsPostingInPlan.isEmpty() || !parentInactiveInPlan.isEmpty()) {
+                || !parentIsPostingInPlan.isEmpty() || !parentInactiveInPlan.isEmpty()
+                || !catchAllCollisions.isEmpty()) {
             Map<String, Object> details = new LinkedHashMap<>();
             details.put("outOfRangeLevels", outOfRangeLevels);
             details.put("levelSkipGaps", levelSkipGaps);
@@ -424,6 +460,7 @@ public class SiewinPucImportService extends TenantAwareService {
             details.put("unmappedGroups", unmappedGroups);
             details.put("parentIsPostingInPlan", parentIsPostingInPlan);
             details.put("parentInactiveInPlan", parentInactiveInPlan);
+            details.put("catchAllCollisions", catchAllCollisions);
 
             log.error("IMPORT_SIEWIN_INTEGRITY_GAP | tenant: {} | details: {}", companyId, details);
             throw new InvalidOperationException(
@@ -462,6 +499,7 @@ public class SiewinPucImportService extends TenantAwareService {
         orderedCodes.sort(Comparator.comparingInt(String::length).thenComparing(Comparator.naturalOrder()));
 
         List<String> truncatedNameWarnings = new ArrayList<>();
+        List<String> catchAllRemapped = new ArrayList<>();
         int alreadyExisting = 0;
         for (String code : orderedCodes) {
             if (existingByCode.containsKey(code)) {
@@ -497,6 +535,9 @@ public class SiewinPucImportService extends TenantAwareService {
             codeToId.put(code, id);
             createdAccounts.add(new SiewinPucImportResultDTO.CreatedAccount(
                     code, name, postingAccount, nature.name(), requiresThirdParty, requiresCostCenter));
+            if (d.catchAll()) {
+                catchAllRemapped.add(d.siewinCode() + " -> " + code + " - " + name);
+            }
             created++;
         }
 
@@ -505,7 +546,7 @@ public class SiewinPucImportService extends TenantAwareService {
                 truncatedNameWarnings.size());
 
         return new SiewinPucImportResultDTO(created, rootAccountsCreated, truncatedNameWarnings, alreadyExisting,
-                createdAccounts);
+                createdAccounts, catchAllRemapped);
     }
 
     /**
@@ -651,6 +692,15 @@ public class SiewinPucImportService extends TenantAwareService {
         return name.length() > 150 ? name.substring(0, 150) : name;
     }
 
-    private record DerivedRow(String code, SiewinPucRowDTO row) {
+    private static boolean sameName(String a, String b) {
+        return a != null && b != null && a.trim().equalsIgnoreCase(b.trim());
+    }
+
+    /**
+     * code: ERP code; catchAll: some level was SIEWIN's 9999 ("Varios",
+     * mapped to 99); siewinCode: the code as SIEWIN prints it
+     * ("22-05-05-9999"), only for messages.
+     */
+    private record DerivedRow(String code, SiewinPucRowDTO row, boolean catchAll, String siewinCode) {
     }
 }

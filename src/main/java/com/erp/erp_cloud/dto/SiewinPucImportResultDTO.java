@@ -24,7 +24,10 @@ public record SiewinPucImportResultDTO(
         // NEW (2026-11-17): cada cuenta creada, con lo que el importador
         // DEDUJO por reglas (naturaleza, movimiento, tercero, centro de
         // costo), para que el contador la revise antes de cargar saldos.
-        List<CreatedAccount> createdAccounts
+        List<CreatedAccount> createdAccounts,
+        // NEW (2026-11-17): cuentas "Varios" de SIEWIN (nivel 9999)
+        // convertidas al tramo 99 del ERP: "22-05-05-9999 -> 22050599 - NOMBRE".
+        List<String> catchAllRemapped
 ) {
 
     public record CreatedAccount(

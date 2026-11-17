@@ -194,4 +194,99 @@ class SiewinPucImportServiceTest {
                 });
         verify(chartOfAccountService, never()).create(any());
     }
+    // ---------------------------------------------------------------
+    // "Varios" 9999 -> 99 (decisión del usuario 2026-11-17)
+    // ---------------------------------------------------------------
+
+    private SiewinPucRowDTO row4(int n1, int n2, int n3, int n4, String name, int posting) {
+        return new SiewinPucRowDTO(n1, n2, n3, n4, 0, 0, name, posting, 0, 0);
+    }
+
+    @Test
+    @DisplayName("A SIEWIN level of 9999 (\"Varios\") becomes slot 99 and is listed back")
+    void fullImport_catchAll9999_mappedTo99() {
+        when(chartOfAccountsRepository.existsByCompanyId(COMPANY_ID)).thenReturn(false);
+        List<SiewinPucRowDTO> rows = List.of(
+                row(22, 0, 0, "Proveedores", 0),
+                row(22, 5, 0, "Nacionales", 0),
+                row(22, 5, 5, "Proveedores nacionales", 0),
+                row4(22, 5, 5, 14, "Cadena Asfaltos", 1),
+                row4(22, 5, 5, 9999, "Proveedores varios", 1));
+
+        SiewinPucImportResultDTO result = service.importFromSiewin(new SiewinPucImportRequest(rows));
+
+        assertThat(result.createdAccounts()).extracting(SiewinPucImportResultDTO.CreatedAccount::code)
+                .contains("22050514", "22050599");
+        assertThat(result.catchAllRemapped()).containsExactly("22-05-05-9999 -> 22050599 - Proveedores varios");
+    }
+
+    @Test
+    @DisplayName("9999 colliding with a real 99 sibling in the file is reported and nothing is created")
+    @SuppressWarnings("unchecked")
+    void fullImport_catchAllCollidesWithReal99_throws() {
+        when(chartOfAccountsRepository.existsByCompanyId(COMPANY_ID)).thenReturn(false);
+        List<SiewinPucRowDTO> rows = List.of(
+                row(22, 0, 0, "Proveedores", 0),
+                row(22, 5, 0, "Nacionales", 0),
+                row(22, 5, 5, "Proveedores nacionales", 0),
+                row4(22, 5, 5, 99, "Otro proveedor", 1),
+                row4(22, 5, 5, 9999, "Proveedores varios", 1));
+
+        assertThatThrownBy(() -> service.importFromSiewin(new SiewinPucImportRequest(rows)))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    Map<String, Object> details = (Map<String, Object>) ex.getDetails();
+                    assertThat((List<String>) details.get("catchAllCollisions")).hasSize(1);
+                    assertThat((List<String>) details.get("duplicateCodes")).isEmpty();
+                });
+        verify(chartOfAccountService, never()).create(any());
+    }
+
+    @Test
+    @DisplayName("ADD_MISSING: 9999 whose 99 already holds a different account in the plan is reported")
+    @SuppressWarnings("unchecked")
+    void addMissing_catchAllTakenInPlan_throws() {
+        when(chartOfAccountsRepository.existsByCompanyId(COMPANY_ID)).thenReturn(true);
+        when(chartOfAccountsRepository.findByCompanyIdOrderByCodeAsc(COMPANY_ID)).thenReturn(new ArrayList<>(List.of(
+                existing(2L, "2", "Pasivo", false, true),
+                existing(22L, "22", "Proveedores", false, true),
+                existing(2205L, "2205", "Nacionales", false, true),
+                existing(220505L, "220505", "Proveedores nacionales", false, true),
+                existing(22050599L, "22050599", "Otro proveedor creado a mano", true, true))));
+        List<SiewinPucRowDTO> rows = List.of(
+                row(22, 0, 0, "Proveedores", 0),
+                row(22, 5, 0, "Nacionales", 0),
+                row(22, 5, 5, "Proveedores nacionales", 0),
+                row4(22, 5, 5, 9999, "Proveedores varios", 1));
+
+        assertThatThrownBy(() -> service.importFromSiewin(
+                new SiewinPucImportRequest(rows, SiewinPucImportRequest.MODE_ADD_MISSING)))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex -> {
+                    Map<String, Object> details = (Map<String, Object>) ex.getDetails();
+                    assertThat((List<String>) details.get("catchAllCollisions")).hasSize(1);
+                });
+        verify(chartOfAccountService, never()).create(any());
+    }
+
+    @Test
+    @DisplayName("ADD_MISSING: 9999 already imported earlier as 99 (same name) is simply 'already existing'")
+    void addMissing_catchAllAlreadyImported_isExisting() {
+        when(chartOfAccountsRepository.existsByCompanyId(COMPANY_ID)).thenReturn(true);
+        when(chartOfAccountsRepository.findByCompanyIdOrderByCodeAsc(COMPANY_ID)).thenReturn(new ArrayList<>(List.of(
+                existing(2L, "2", "Pasivo", false, true),
+                existing(22L, "22", "Proveedores", false, true),
+                existing(2205L, "2205", "Nacionales", false, true),
+                existing(220505L, "220505", "Proveedores nacionales", false, true),
+                existing(22050599L, "22050599", "PROVEEDORES VARIOS", true, true))));
+        List<SiewinPucRowDTO> rows = List.of(
+                row(22, 0, 0, "Proveedores", 0),
+                row(22, 5, 0, "Nacionales", 0),
+                row(22, 5, 5, "Proveedores nacionales", 0),
+                row4(22, 5, 5, 9999, "Proveedores varios", 1));
+
+        SiewinPucImportResultDTO result = service.importFromSiewin(
+                new SiewinPucImportRequest(rows, SiewinPucImportRequest.MODE_ADD_MISSING));
+
+        verify(chartOfAccountService, never()).create(any());
+        assertThat(result.accountsAlreadyExisting()).isEqualTo(4);
+    }
 }
