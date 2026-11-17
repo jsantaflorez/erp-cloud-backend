@@ -20,6 +20,20 @@ public record SiewinPucImportResultDTO(
         // NEW (2026-11-17): modo "solo agregar cuentas nuevas" -- cuántos
         // códigos del archivo ya existían en el plan y se dejaron intactos
         // (0 en una importación completa).
-        int accountsAlreadyExisting
+        int accountsAlreadyExisting,
+        // NEW (2026-11-17): cada cuenta creada, con lo que el importador
+        // DEDUJO por reglas (naturaleza, movimiento, tercero, centro de
+        // costo), para que el contador la revise antes de cargar saldos.
+        List<CreatedAccount> createdAccounts
 ) {
+
+    public record CreatedAccount(
+            String code,
+            String name,
+            boolean postingAccount,
+            String nature,
+            boolean requiresThirdParty,
+            boolean requiresCostCenter
+    ) {
+    }
 }

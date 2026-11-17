@@ -439,6 +439,7 @@ public class SiewinPucImportService extends TenantAwareService {
 
         Map<String, Long> codeToId = new HashMap<>();
         existingByCode.forEach((code, account) -> codeToId.put(code, account.getId()));
+        List<SiewinPucImportResultDTO.CreatedAccount> createdAccounts = new ArrayList<>();
         int created = 0;
         for (char digit : rootDigitsNeeded) {
             String rootCode = String.valueOf(digit);
@@ -446,10 +447,13 @@ public class SiewinPucImportService extends TenantAwareService {
                 continue; // ADD_MISSING: root already in the plan
             }
             AccountClass accountClass = AccountClass.fromCode(rootCode);
+            AccountNature rootNature = AccountNature.fromAccountClass(accountClass);
             Long id = createOne(rootCode, ROOT_NAMES.get(digit), accountClass,
                     CLASS_DEFAULT_CATEGORY.get(accountClass),
-                    AccountNature.fromAccountClass(accountClass), false, null, false, false);
+                    rootNature, false, null, false, false);
             codeToId.put(rootCode, id);
+            createdAccounts.add(new SiewinPucImportResultDTO.CreatedAccount(
+                    rootCode, ROOT_NAMES.get(digit), false, rootNature.name(), false, false));
             created++;
         }
         int rootAccountsCreated = created;
@@ -491,6 +495,8 @@ public class SiewinPucImportService extends TenantAwareService {
             Long id = createOne(code, name, accountClass, category, nature,
                     postingAccount, parentId, requiresThirdParty, requiresCostCenter);
             codeToId.put(code, id);
+            createdAccounts.add(new SiewinPucImportResultDTO.CreatedAccount(
+                    code, name, postingAccount, nature.name(), requiresThirdParty, requiresCostCenter));
             created++;
         }
 
@@ -498,7 +504,8 @@ public class SiewinPucImportService extends TenantAwareService {
                 companyId, addMissing ? "ADD_MISSING" : "FULL", created, rootAccountsCreated, alreadyExisting,
                 truncatedNameWarnings.size());
 
-        return new SiewinPucImportResultDTO(created, rootAccountsCreated, truncatedNameWarnings, alreadyExisting);
+        return new SiewinPucImportResultDTO(created, rootAccountsCreated, truncatedNameWarnings, alreadyExisting,
+                createdAccounts);
     }
 
     /**

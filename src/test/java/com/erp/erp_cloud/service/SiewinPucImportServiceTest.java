@@ -126,6 +126,12 @@ class SiewinPucImportServiceTest {
         assertThat(result.accountsCreated()).isEqualTo(1);
         assertThat(result.rootAccountsCreated()).isZero();
         assertThat(result.accountsAlreadyExisting()).isEqualTo(3);
+        assertThat(result.createdAccounts()).singleElement().satisfies(a -> {
+            assertThat(a.code()).isEqualTo("110510");
+            assertThat(a.name()).isEqualTo("Caja menor");
+            assertThat(a.postingAccount()).isTrue();
+            assertThat(a.nature()).isEqualTo("D");
+        });
     }
 
     @Test
@@ -145,6 +151,7 @@ class SiewinPucImportServiceTest {
         verify(chartOfAccountService, never()).create(any());
         assertThat(result.accountsCreated()).isZero();
         assertThat(result.accountsAlreadyExisting()).isEqualTo(4);
+        assertThat(result.createdAccounts()).isEmpty();
     }
 
     @Test
