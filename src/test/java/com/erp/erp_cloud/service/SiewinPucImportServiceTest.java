@@ -289,4 +289,35 @@ class SiewinPucImportServiceTest {
         verify(chartOfAccountService, never()).create(any());
         assertThat(result.accountsAlreadyExisting()).isEqualTo(4);
     }
+
+    @Test
+    @DisplayName("Groups 17, 21, 34, 52 and 62 (updated Navarra PUC) have a category and import cleanly")
+    void fullImport_newStandardGroups_haveCategory() {
+        when(chartOfAccountsRepository.existsByCompanyId(COMPANY_ID)).thenReturn(false);
+        List<SiewinPucRowDTO> rows = List.of(
+                row(17, 0, 0, "DIFERIDOS", 0),
+                row(17, 5, 0, "GASTOS PAGADOS POR ANTICIPADO", 0),
+                row(17, 5, 20, "SEGUROS Y FIANZAS", 0),
+                row4(17, 5, 20, 1, "POLIZA AREAS COMUNES", 1),
+                row(21, 0, 0, "OBLIGACIONES FINANCIERAS", 0),
+                row(21, 20, 0, "COMPANIAS DE FINANCIAMIENTO COMERCIAL", 0),
+                row(21, 20, 10, "ACEPTACIONES FINANCIERAS", 0),
+                row4(21, 20, 10, 1, "INVERSORA PICHINCHA", 1),
+                row(34, 0, 0, "REVALORIZACION DEL PATRIMONIO", 0),
+                row(34, 5, 0, "AJUSTES POR INFLACION", 0),
+                row(34, 5, 15, "DE RESERVAS", 0),
+                row4(34, 5, 15, 1, "DE RESERVAS", 1),
+                row(52, 0, 0, "OPERACIONALES DE VENTAS", 0),
+                row(62, 0, 0, "COMPRAS", 0),
+                row(62, 25, 0, "DEVOLUCION EN COMPRAS", 0),
+                row(62, 25, 5, "DEVOLUCION EN COMPRAS", 0),
+                row4(62, 25, 5, 1, "DEVOLUCION EN COMPRAS", 1));
+
+        SiewinPucImportResultDTO result = service.importFromSiewin(new SiewinPucImportRequest(rows));
+
+        assertThat(result.createdAccounts()).extracting(SiewinPucImportResultDTO.CreatedAccount::code)
+                .contains("17052001", "21201001", "34051501", "52", "62250501");
+        assertThat(result.createdAccounts()).filteredOn(a -> a.code().equals("62250501"))
+                .singleElement().satisfies(a -> assertThat(a.nature()).isEqualTo("C"));
+    }
 }

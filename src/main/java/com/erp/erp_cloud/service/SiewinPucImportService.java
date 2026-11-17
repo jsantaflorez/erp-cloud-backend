@@ -168,19 +168,27 @@ public class SiewinPucImportService extends TenantAwareService {
         SIEWIN_GROUP_CATEGORY_2.put("12", AccountCategory.INVESTMENT);                // Inversiones e instrumentos financieros
         SIEWIN_GROUP_CATEGORY_2.put("13", AccountCategory.ACCOUNTS_RECEIVABLE);       // Cuentas comerciales por cobrar y otras
         SIEWIN_GROUP_CATEGORY_2.put("15", AccountCategory.PROPERTY_PLANT_EQUIPMENT);  // Propiedades planta y equipo
+        // NEW (2026-11-17): grupos que aparecieron en el PUC actualizado de
+        // Navarra (no estaban en la primera muestra). Significado estándar
+        // del Decreto 2650, el mismo en cualquier cliente de SIEWIN.
+        SIEWIN_GROUP_CATEGORY_2.put("17", AccountCategory.PREPAID_EXPENSES);          // Diferidos (gastos pagados por anticipado)
+        SIEWIN_GROUP_CATEGORY_2.put("21", AccountCategory.SHORT_TERM_DEBT);           // Obligaciones financieras
         SIEWIN_GROUP_CATEGORY_2.put("22", AccountCategory.ACCOUNTS_PAYABLE);          // Cuentas corrientes comerciales
         SIEWIN_GROUP_CATEGORY_2.put("23", AccountCategory.ACCOUNTS_PAYABLE);          // Obligaciones financieras y cuentas por pagar (default; overridden at 4-digit for tax/payroll subgroups)
         SIEWIN_GROUP_CATEGORY_2.put("25", AccountCategory.ACCRUED_EXPENSES);          // Pasivos por beneficios a los empleados
         SIEWIN_GROUP_CATEGORY_2.put("27", AccountCategory.OTHER_LIABILITY);           // Pasivos por ingresos diferidos
         SIEWIN_GROUP_CATEGORY_2.put("28", AccountCategory.OTHER_LIABILITY);           // Otros pasivos
         SIEWIN_GROUP_CATEGORY_2.put("31", AccountCategory.SHARE_CAPITAL);             // Capital social
+        SIEWIN_GROUP_CATEGORY_2.put("34", AccountCategory.OTHER_EQUITY);              // Revalorizacion del patrimonio (NEW 2026-11-17)
         SIEWIN_GROUP_CATEGORY_2.put("33", AccountCategory.RESERVES);                  // Capital social y reservas (its only real child is "Reservas Estatutarias", not share capital -- see class javadoc)
         SIEWIN_GROUP_CATEGORY_2.put("36", AccountCategory.CURRENT_YEAR_PROFIT);       // Resultados del ejercicio
         SIEWIN_GROUP_CATEGORY_2.put("37", AccountCategory.RETAINED_EARNINGS);         // Resultados acumulados
         SIEWIN_GROUP_CATEGORY_2.put("41", AccountCategory.SERVICE_REVENUE);           // Ingresos netos actividad de servicios
         SIEWIN_GROUP_CATEGORY_2.put("42", AccountCategory.FINANCIAL_INCOME);          // Ingresos financieros y otros ingresos (default; overridden at 4-digit for non-financial children)
         SIEWIN_GROUP_CATEGORY_2.put("51", AccountCategory.ADMINISTRATIVE_EXPENSE);    // De administracion
+        SIEWIN_GROUP_CATEGORY_2.put("52", AccountCategory.SALES_EXPENSE);             // Operacionales de ventas (NEW 2026-11-17)
         SIEWIN_GROUP_CATEGORY_2.put("53", AccountCategory.NON_OPERATING_EXPENSE);     // No operacionales
+        SIEWIN_GROUP_CATEGORY_2.put("62", AccountCategory.COST_OF_GOODS_SOLD);        // Compras (NEW 2026-11-17; 6225 Devolucion en compras queda credito por la regla DEVOLUCION)
     }
 
     // 4-digit SIEWIN subgroup (nivel1+nivel2, re-derived) -> category.
