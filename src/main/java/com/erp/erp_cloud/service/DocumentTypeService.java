@@ -32,6 +32,17 @@ public class DocumentTypeService extends TenantAwareService {
     // -- a closing entry must never be editable by hand (see its guard).
     public static final String CLOSING_DOC_TYPE_CODE = "CIERRE";
 
+    // NEW (2026-11-12): fixed code for the auto-created opening-balance
+    // document type, used by the SIEWIN balances migration importer
+    // (SiewinBalanceImportService) to post a company's Dec-31 opening
+    // snapshot as a real journal entry. Same reserved-type pattern as
+    // CLOSING_DOC_TYPE_CODE above: never selectable by hand (see the
+    // create()/update() guards in JournalEntryService), and the entry
+    // itself is written directly against the repository, bypassing the
+    // normal create() validations -- same reasoning as
+    // AccountingPeriodService.buildAndSaveClosingEntry() for CIERRE.
+    public static final String OPENING_DOC_TYPE_CODE = "APERTURA";
+
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
     private final CompanyRepository companyRepository;
@@ -213,6 +224,25 @@ public class DocumentTypeService extends TenantAwareService {
                     entity.setActive(true);
                     entity.setAccounting(true);
                     log.info("Auto-creating 'CIERRE' document type for company ID: {}", companyId);
+                    return repository.save(entity);
+                });
+    }
+
+    // NEW (2026-11-12): same pattern as findOrCreateClosingDocumentType,
+    // for the opening-balance ("APERTURA") document type used by the
+    // SIEWIN balances migration importer.
+    public DocumentType findOrCreateOpeningDocumentType(Long companyId) {
+        return repository.findByCompanyIdAndCode(companyId, OPENING_DOC_TYPE_CODE)
+                .orElseGet(() -> {
+                    DocumentType entity = new DocumentType();
+                    entity.setCompany(companyRepository.getReferenceById(companyId));
+                    entity.setCode(OPENING_DOC_TYPE_CODE);
+                    entity.setName("Apertura de Saldos (Migración)");
+                    entity.setPrefix("APERTURA");
+                    entity.setCurrentConsecutive(0L);
+                    entity.setActive(true);
+                    entity.setAccounting(true);
+                    log.info("Auto-creating 'APERTURA' document type for company ID: {}", companyId);
                     return repository.save(entity);
                 });
     }

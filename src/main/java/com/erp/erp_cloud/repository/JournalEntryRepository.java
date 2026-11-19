@@ -630,4 +630,25 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
             "FROM JournalEntry e JOIN e.items item " +
             "WHERE item.thirdParty = :thirdParty AND e.active = true")
     boolean existsByThirdParty(@Param("thirdParty") ThirdParty thirdParty);
+
+    // ═══════════════════════════════════════════════════════════
+    // SIEWIN OPENING-BALANCE MIGRATION (NEW 2026-11-12)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Every NOT-annulled journal entry of a given document type code for a
+     * company -- used by SiewinBalanceImportService to find the current
+     * live "APERTURA" opening-balance entry (if any) before replacing it.
+     * Expected to return 0 (first import) or 1 (a re-upload) element;
+     * SiewinBalanceImportService treats more than 1 as a data-integrity
+     * problem to reject rather than silently pick one -- see
+     * claude/analisis-migracion-saldos-siewin-2026-11-12.md, section 2.5.
+     */
+    @Query("SELECT e FROM JournalEntry e " +
+            "WHERE e.company.id = :companyId " +
+            "AND e.documentType.code = :documentTypeCode " +
+            "AND e.annulled = false")
+    List<JournalEntry> findLiveByCompanyIdAndDocumentTypeCode(
+            @Param("companyId") Long companyId,
+            @Param("documentTypeCode") String documentTypeCode);
 }
