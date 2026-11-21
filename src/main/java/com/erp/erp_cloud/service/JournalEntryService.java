@@ -21,6 +21,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import com.erp.erp_cloud.service.base.TenantAwareService;
+import com.erp.erp_cloud.security.UserPrincipal;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -317,6 +320,10 @@ public class JournalEntryService extends TenantAwareService {
         // 4. FINANCIAL NEUTRALIZATION
         entry.setAnnulled(true);
         entry.setAnnulledAt(java.time.LocalDateTime.now());
+        // FIX (2026-11-19, auditoria F1-02 / Bloque 0.2): a manual annulment
+        // never recorded WHO did it -- annulled_by stayed NULL; only the
+        // system processes (year close, SIEWIN re-import) filled it in.
+        entry.setAnnulledBy(currentActor());
         entry.setAnnulmentReason(annulRequest.getReason());
 
         for (JournalEntryItem item : entry.getItems()) {
@@ -508,6 +515,19 @@ public class JournalEntryService extends TenantAwareService {
     // ═══════════════════════════════════════════════════════════
     // VALIDATION HELPERS
     // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Username (email) of the authenticated user, for the annulled_by audit
+     * field. Same rule as AccountingPeriodController.currentUsername():
+     * "system" only when there is no authenticated user.
+     */
+    private String currentActor() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.getPrincipal() instanceof UserPrincipal principal) {
+            return principal.getUsername();
+        }
+        return "system";
+    }
 
     private void validateEntryDate(LocalDate date) {
         if (date == null) {

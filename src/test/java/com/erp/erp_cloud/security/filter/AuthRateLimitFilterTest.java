@@ -17,7 +17,56 @@ class AuthRateLimitFilterTest {
     private AuthRateLimitFilter filter(int loginPerMinute) {
         // findAndRegisterModules(): ApiResponse carries an Instant timestamp; the
         // ObjectMapper Spring injects in production already has JavaTimeModule.
-        return new AuthRateLimitFilter(new ObjectMapper().findAndRegisterModules(), true, loginPerMinute, 20, false);
+        return new AuthRateLimitFilter(new ObjectMapper().findAndRegisterModules(), true, loginPerMinute, 20, false, 1);
+    }
+
+    private AuthRateLimitFilter behindProxies(int hops) {
+        return new AuthRateLimitFilter(new ObjectMapper().findAndRegisterModules(), true, 1, 20, true, hops);
+    }
+
+    @Test
+    @DisplayName("X-Forwarded-For is read from the right: a value the client writes is ignored")
+    void clientCannotChooseItsOwnIp() {
+        AuthRateLimitFilter f = behindProxies(1);
+        MockHttpServletRequest req = loginRequest();
+        // client sent "1.2.3.4"; our proxy appended the real address
+        req.addHeader("X-Forwarded-For", "1.2.3.4, 200.10.20.30");
+        assertThat(f.clientIp(req)).isEqualTo("200.10.20.30");
+    }
+
+    @Test
+    @DisplayName("Rotating a spoofed X-Forwarded-For no longer bypasses the limit")
+    void rotatingSpoofedHeaderIsStillLimited() throws Exception {
+        AuthRateLimitFilter f = behindProxies(1);
+        MockHttpServletRequest first = loginRequest();
+        first.addHeader("X-Forwarded-For", "9.9.9.1, 200.10.20.30");
+        MockHttpServletResponse r1 = new MockHttpServletResponse();
+        f.doFilter(first, r1, new MockFilterChain());
+        assertThat(r1.getStatus()).isEqualTo(200);
+
+        MockHttpServletRequest second = loginRequest();
+        second.addHeader("X-Forwarded-For", "9.9.9.2, 200.10.20.30");
+        MockHttpServletResponse r2 = new MockHttpServletResponse();
+        f.doFilter(second, r2, new MockFilterChain());
+        assertThat(r2.getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    @DisplayName("With two trusted proxies the client is the second entry from the right")
+    void twoTrustedHops() {
+        AuthRateLimitFilter f = behindProxies(2);
+        MockHttpServletRequest req = loginRequest();
+        req.addHeader("X-Forwarded-For", "1.2.3.4, 200.10.20.30, 35.191.0.1");
+        assertThat(f.clientIp(req)).isEqualTo("200.10.20.30");
+    }
+
+    @Test
+    @DisplayName("Without trust-forwarded-for the header is ignored")
+    void headerIgnoredWhenNotTrusted() {
+        AuthRateLimitFilter f = filter(1);
+        MockHttpServletRequest req = loginRequest();
+        req.addHeader("X-Forwarded-For", "1.2.3.4");
+        assertThat(f.clientIp(req)).isEqualTo("10.0.0.1");
     }
 
     @Test

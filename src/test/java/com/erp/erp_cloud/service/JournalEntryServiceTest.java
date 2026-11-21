@@ -13,6 +13,9 @@ import com.erp.erp_cloud.repository.JournalEntryRepository;
 import com.erp.erp_cloud.repository.ThirdPartyRepository;
 import com.erp.erp_cloud.repository.TaxRepository;
 import com.erp.erp_cloud.security.context.TenantContext;
+import com.erp.erp_cloud.security.UserPrincipal;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -113,6 +116,7 @@ class JournalEntryServiceTest {
     @AfterEach
     void tearDown() {
         TenantContext.clear();
+        SecurityContextHolder.clearContext();
     }
 
     // ============================================================
@@ -713,6 +717,31 @@ class JournalEntryServiceTest {
         assertThat(result.isAnnulled()).isTrue();
         assertThat(result.getAnnulmentReason()).isEqualTo("Posted in error");
         assertThat(result.getAnnulledAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("annul() records the authenticated user in annulledBy (Bloque 0.2)")
+    void annul_recordsAuthenticatedUser() {
+        UserPrincipal principal = new UserPrincipal(7L, "contador@firma.com", "x", "Contador", COMPANY_ID, List.of());
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
+        JournalEntry entry = existingEntry(LocalDate.now());
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        service.annul(999L, annulmentRequest("Posted in error"));
+
+        assertThat(entry.getAnnulledBy()).isEqualTo("contador@firma.com");
+    }
+
+    @Test
+    @DisplayName("annul() without an authenticated user records 'system', never NULL")
+    void annul_withoutAuthentication_recordsSystem() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        service.annul(999L, annulmentRequest("x"));
+
+        assertThat(entry.getAnnulledBy()).isEqualTo("system");
     }
 
     @Test

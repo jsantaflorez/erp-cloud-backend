@@ -36,6 +36,37 @@ class AuthorizationRulesTest {
     }
 
     @Test
+    @DisplayName("Read-only profile (VIEWER) cannot write; ACCOUNTANT and admins can")
+    void canWriteByProfile() {
+        AuthorizationRules rules = new AuthorizationRules(List.of("SYS_ADMIN", "COMPANY_ADMIN"));
+
+        authenticateWith("ROLE_VIEWER", "JOURNAL_ENTRY_READ");
+        assertThat(rules.canWrite()).isFalse();
+        assertThat(rules.isAdmin()).isFalse();
+
+        authenticateWith("ROLE_ACCOUNTANT");
+        assertThat(rules.canWrite()).isTrue();
+        assertThat(rules.isAdmin()).isFalse();
+
+        authenticateWith("ROLE_COMPANY_ADMIN");
+        assertThat(rules.canWrite()).isTrue();
+        assertThat(rules.isAdmin()).isTrue();
+    }
+
+    @Test
+    @DisplayName("A role nobody classified is read-only by default (allow-list)")
+    void unknownRoleIsReadOnly() {
+        authenticateWith("ROLE_CUSTOM_SOMETHING");
+        assertThat(new AuthorizationRules(List.of("SYS_ADMIN", "COMPANY_ADMIN")).canWrite()).isFalse();
+    }
+
+    @Test
+    @DisplayName("No authentication means no write access")
+    void noAuthenticationCannotWrite() {
+        assertThat(new AuthorizationRules(List.of("SYS_ADMIN")).canWrite()).isFalse();
+    }
+
+    @Test
     @DisplayName("A user holding a configured admin role is an administrator")
     void adminRoleGrantsAccess() {
         authenticateWith("ROLE_SYS_ADMIN", "INVOICE_READ");

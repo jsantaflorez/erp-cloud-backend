@@ -125,6 +125,12 @@ public class JournalEntryController {
      * @param request Updated journal entry data
      * @return Updated journal entry details
      */
+    // Bloque 0.8 (auditoria 2026-11-19, F1-27): administrators only, same
+    // rule as /annul. update() rewrites every line of a posted entry (same
+    // accounting effect as annulling it), so letting any role do it while
+    // annulment is admin-only was an open side door. Temporary until real
+    // per-permission checks (JOURNAL_EDIT, ...) replace @authz.isAdmin().
+    @PreAuthorize("@authz.isAdmin()")
     @PutMapping("/{id}")
     @Operation(
             summary = "Update journal entry",

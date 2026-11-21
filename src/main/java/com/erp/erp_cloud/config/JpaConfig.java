@@ -4,6 +4,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.AuditorAware;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import com.erp.erp_cloud.security.UserPrincipal;
 import java.util.Optional;
 
 /**
@@ -21,14 +24,23 @@ public class JpaConfig {
      */
     @Bean
     public AuditorAware<Long> jpaAuditorProvider() {
-        /*
-         * TODO: POST-AUTHENTICATION PHASE
-         * Once the JWT filter is ready, we will update this lambda expression to fetch
-         * the authenticated user principal from SecurityContextHolder.getContext().getAuthentication()
-         */
-
-        // FIXME: TEMPORARY BOOTSTRAP PHASE
-        // Returns hardcoded User ID 1L (System Admin) to match our database BIGINT refactoring.
-        return () -> Optional.of(1L);
+        // FIX (2026-11-19, auditoria F1-02 / Bloque 0.1): before this, the
+        // provider returned a hardcoded 1L, so created_by/updated_by of
+        // EVERY row in EVERY table said "user 1" no matter who acted. It now
+        // returns the authenticated user's id (UserPrincipal, set by the JWT
+        // filter on every request). With no authenticated user (system work
+        // outside a request, failed-login bookkeeping on /api/auth/login) it
+        // returns empty: Spring Data then leaves the column NULL instead of
+        // attributing the change to someone who did not make it.
+        return () -> {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication != null
+                    && authentication.isAuthenticated()
+                    && authentication.getPrincipal() instanceof UserPrincipal principal
+                    && principal.getId() != null) {
+                return Optional.of(principal.getId());
+            }
+            return Optional.empty();
+        };
     }
 }

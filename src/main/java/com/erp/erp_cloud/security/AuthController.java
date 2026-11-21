@@ -134,7 +134,15 @@ public class AuthController {
         String email = request.email().trim().toLowerCase();
 
         List<CompanyOptionDTO> companies = userRepository.findAccessibleCompaniesByEmail(email).stream()
-                .map(c -> new CompanyOptionDTO(c.getId(), c.getLegalName(), c.getTradeName(), c.getTaxId()))
+                // Bloque 0.7 (auditoria 2026-11-19, F1-13): this endpoint is
+                // PUBLIC (no password), so it no longer returns the NIT
+                // (taxId) or the trade name -- anyone could map which
+                // companies an e-mail works for, with their tax ids. Only
+                // what the login dropdown needs. The authenticated
+                // GET /api/v1/session/companies still returns everything.
+                // Temporary: the real fix is a two-step login (password
+                // first, then the company list).
+                .map(c -> new CompanyOptionDTO(c.getId(), c.getLegalName(), null, null))
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(ApiResponse.success("Companies retrieved successfully.", companies));

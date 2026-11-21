@@ -42,14 +42,16 @@ public abstract class BaseEntity implements Serializable {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // TODO: Link these fields to Spring Security context after JWT implementation
+    // Filled by JpaConfig.jpaAuditorProvider() with the authenticated user's id
+    // (2026-11-19). NULL means "no authenticated user" (system work); it used
+    // to be a hardcoded 1, which attributed every change to the same user.
     /**
      * Stores the username who created the record.
      * Controlled by Spring Data Auditing via @CreatedBy.
      */
     @CreatedBy
     @Column(name = "created_by", updatable = false)
-    private long createdBy;// ID of the User who created the record
+    private Long createdBy;// ID of the User who created the record (NULL = system)
 
     /**
      * Stores the username who last modified the record.
