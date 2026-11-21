@@ -37,7 +37,8 @@ public class CorsConfig {
                 "Accept",
                 "X-Requested-With",
                 "X-Correlation-ID",    // Distributed tracing — consumed by GlobalExceptionHandler
-                "X-Tenant-Id"          // Dynamic multi-tenancy bound routing header
+                "X-Tenant-Id",         // Dynamic multi-tenancy bound routing header
+                "Idempotency-Key"      // Bloque A (2026-11-21): safe retry of journal entry creates
         ));
 
         // 4. Expose headers so React Axios/Fetch can read them from the response

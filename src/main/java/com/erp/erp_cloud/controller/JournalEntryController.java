@@ -33,6 +33,9 @@ import java.time.LocalDate;
 @Tag(name = "Journal Entries", description = "Endpoints for managing accounting vouchers (Comprobantes Contables)")
 public class JournalEntryController {
 
+    /** Bloque A (2026-11-21, F1-03): client key that makes a create safe to repeat. */
+    static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
+
     private final JournalEntryService service;
 
     // ═══════════════════════════════════════════════════════════
@@ -98,9 +101,11 @@ public class JournalEntryController {
             description = "Referenced entity not found (account, document type, third party, or cost center)"
     )
     public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> create(
-            @Valid @RequestBody JournalEntryRequest request) {
+            @Valid @RequestBody JournalEntryRequest request,
+            @RequestHeader(value = IDEMPOTENCY_HEADER, required = false) String idempotencyKey) {
 
-        JournalEntryResponseDTO created = service.create(request);
+        JournalEntryResponseDTO created = createIdempotent(
+                () -> service.create(request, idempotencyKey), idempotencyKey);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -304,6 +309,24 @@ public class JournalEntryController {
         ));
     }
 
+    /**
+     * Bloque A (2026-11-21): saved versions of an entry, newest first. Each
+     * one is the complete entry as it was right before an edit or the
+     * annulment, with who changed it and when. Read-only, any role.
+     */
+    @GetMapping("/{id}/history")
+    @Operation(
+            summary = "Get entry version history",
+            description = "Previous versions of a journal entry, saved before each edit or annulment."
+    )
+    public ResponseEntity<ApiResponse<java.util.List<JournalEntryHistoryDTO>>> getHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(new ApiResponse<>(
+                "Journal entry history retrieved successfully",
+                true,
+                service.getHistory(id)
+        ));
+    }
+
     // Dentro de JournalEntryController.java
 
     /**
@@ -362,9 +385,11 @@ public class JournalEntryController {
     )
     public ResponseEntity<ApiResponse<JournalEntryResponseDTO>> duplicate(
             @PathVariable Long id,
-            @Valid @RequestBody JournalEntryRequest.DuplicateRequest request) {
+            @Valid @RequestBody JournalEntryRequest.DuplicateRequest request,
+            @RequestHeader(value = IDEMPOTENCY_HEADER, required = false) String idempotencyKey) {
 
-        JournalEntryResponseDTO duplicated = service.duplicate(id, request);
+        JournalEntryResponseDTO duplicated = createIdempotent(
+                () -> service.duplicate(id, request, idempotencyKey), idempotencyKey);
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
@@ -373,6 +398,26 @@ public class JournalEntryController {
                         true,
                         duplicated
                 ));
+    }
+
+    /**
+     * Runs a create. If two identical requests (same Idempotency-Key) raced
+     * past the lookup in JournalEntryService.create() at the same instant,
+     * the second one fails the UNIQUE (company_id, idempotency_key) when its
+     * transaction commits -- that transaction is rolled back (consecutive
+     * included), and this answers it with the entry the first one created,
+     * so the client sees one success, not a constraint error.
+     */
+    private JournalEntryResponseDTO createIdempotent(
+            java.util.function.Supplier<JournalEntryResponseDTO> create, String idempotencyKey) {
+        try {
+            return create.get();
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            if (idempotencyKey == null || idempotencyKey.isBlank()) {
+                throw ex;
+            }
+            return service.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> ex);
+        }
     }
 
 

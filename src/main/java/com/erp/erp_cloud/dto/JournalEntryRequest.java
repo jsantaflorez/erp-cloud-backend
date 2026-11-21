@@ -27,6 +27,12 @@ public class JournalEntryRequest {
     @Valid // This ensures the items inside the list are also validated!
     private List<ItemRequest> items;
 
+    // Bloque A (2026-11-21, F1-20): on update, the version the client loaded
+    // (JournalEntryResponseDTO.version). If someone else saved the entry in
+    // the meantime, update() rejects with ENTRY_MODIFIED_BY_OTHER_USER.
+    // Null = not checked (older clients, create).
+    private Long version;
+
     @Data
     public static class ItemRequest {
         @NotNull(message = "Account ID is required")

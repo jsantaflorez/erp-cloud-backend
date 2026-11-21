@@ -135,6 +135,23 @@ public class GlobalExceptionHandler {
     // DATABASE / PERSISTENCE EXCEPTIONS
     // ═══════════════════════════════════════════════════════════
 
+    /**
+     * Bloque A (2026-11-21, F1-20): two users saved the same record at the
+     * same time (@Version). 409 with a stable code the frontend translates,
+     * never the raw Hibernate text. jakarta OptimisticLockException is listed
+     * too so it does not fall into the generic PersistenceException handler.
+     */
+    @ExceptionHandler({
+            org.springframework.dao.OptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class
+    })
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(Exception ex, HttpServletRequest request) {
+        log.warn("Concurrent modification: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(buildError("CONCURRENT_MODIFICATION", request));
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex, HttpServletRequest request) {
         log.error("Database constraint violation", ex);

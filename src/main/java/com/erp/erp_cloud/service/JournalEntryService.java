@@ -61,6 +61,8 @@ public class JournalEntryService extends TenantAwareService {
     private final AccountingPeriodService accountingPeriodService;
     private final CompanyRepository companyRepository;
     private final TaxRepository taxRepository;
+    // Bloque A (2026-11-21): saves the previous version before an edit/annul.
+    private final JournalEntryHistoryService historyService;
 
     // ═══════════════════════════════════════════════════════════
     // CREATE OPERATIONS
@@ -71,7 +73,29 @@ public class JournalEntryService extends TenantAwareService {
      */
     @Transactional
     public JournalEntryResponseDTO create(JournalEntryRequest request) {
+        return create(request, null);
+    }
+
+    /**
+     * Bloque A (2026-11-21, F1-03): with an idempotency key, a request that
+     * already created an entry returns that same entry instead of creating
+     * a second one (double Ctrl+Enter, network retry). Two copies racing at
+     * the same instant both pass this lookup; the second then fails the
+     * UNIQUE (company_id, idempotency_key) and the controller answers it
+     * with the entry the first one created (findByIdempotencyKey).
+     */
+    @Transactional
+    public JournalEntryResponseDTO create(JournalEntryRequest request, String idempotencyKey) {
         Long companyId = currentTenantId();
+        String key = normalizeIdempotencyKey(idempotencyKey);
+        if (key != null) {
+            Optional<JournalEntry> existing = repository.findByCompanyIdAndIdempotencyKey(companyId, key);
+            if (existing.isPresent()) {
+                log.info("Idempotent replay: key already used by entry {} (company {})",
+                        existing.get().getDocumentNumber(), companyId);
+                return mapToResponseDTO(existing.get());
+            }
+        }
         log.info("Creating journal entry for company ID: {}", companyId);
 
         // 1. Date and Period Validation
@@ -89,6 +113,7 @@ public class JournalEntryService extends TenantAwareService {
 
         // 4. Create Entry Header
         JournalEntry entry = createEntryHeader(docType, request, companyId);
+        entry.setIdempotencyKey(key);
 
         // 5. Process Line Items
         processLineItems(entry, request, companyId);
@@ -317,6 +342,9 @@ public class JournalEntryService extends TenantAwareService {
 
         log.info("Annulling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
 
+        // Bloque A (2026-11-21): keep the entry as it was, before annulling.
+        historyService.record(entry, mapToResponseDTO(entry), JournalEntryHistory.ACTION_ANNUL);
+
         // 4. FINANCIAL NEUTRALIZATION
         entry.setAnnulled(true);
         entry.setAnnulledAt(java.time.LocalDateTime.now());
@@ -371,6 +399,12 @@ public class JournalEntryService extends TenantAwareService {
      */
     @Transactional
     public JournalEntryResponseDTO duplicate(Long id, JournalEntryRequest.DuplicateRequest duplicateRequest) {
+        return duplicate(id, duplicateRequest, null);
+    }
+
+    @Transactional
+    public JournalEntryResponseDTO duplicate(Long id, JournalEntryRequest.DuplicateRequest duplicateRequest,
+                                             String idempotencyKey) {
         Long companyId = currentTenantId();
 
         JournalEntry source = repository.findById(id)
@@ -421,7 +455,34 @@ public class JournalEntryService extends TenantAwareService {
         log.info("Duplicating journal entry {} (ID: {}) onto {}",
                 source.getDocumentNumber(), id, duplicateRequest.getEntryDate());
 
-        return create(request);
+        return create(request, idempotencyKey);
+    }
+
+    /**
+     * The entry a given idempotency key created, if any (Bloque A, F1-03).
+     * Used by the controller to answer the losing copy of two identical
+     * requests that raced past the lookup in create().
+     */
+    @Transactional(readOnly = true)
+    public Optional<JournalEntryResponseDTO> findByIdempotencyKey(String idempotencyKey) {
+        String key = normalizeIdempotencyKey(idempotencyKey);
+        if (key == null) {
+            return Optional.empty();
+        }
+        return repository.findByCompanyIdAndIdempotencyKey(currentTenantId(), key)
+                .map(this::mapToResponseDTO);
+    }
+
+    /** Null/blank = no key. Longer than the column (64) = rejected, never truncated. */
+    private static String normalizeIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        String key = idempotencyKey.trim();
+        if (key.length() > 64) {
+            throw new InvalidOperationException("Idempotency key too long (max 64).", "INVALID_IDEMPOTENCY_KEY");
+        }
+        return key;
     }
 
     /**
@@ -475,6 +536,15 @@ public class JournalEntryService extends TenantAwareService {
         // Creating a NEW manual entry with the APERTURA type is still
         // rejected in validateAndGetDocumentType() (OPENING_DOC_TYPE_RESERVED).
 
+        // Bloque A (2026-11-21, F1-20): the client sends the version it
+        // loaded. If someone saved the entry after that, refuse instead of
+        // silently replacing their lines with this older copy.
+        if (request.getVersion() != null && !request.getVersion().equals(existingEntry.getVersion())) {
+            throw new InvalidOperationException(
+                    "This entry was modified by another user. Reload it and try again.",
+                    "ENTRY_MODIFIED_BY_OTHER_USER");
+        }
+
         // 3. PERIOD VALIDATION
         accountingPeriodService.validateDateIsOpen(existingEntry.getEntryDate(), companyId);
 
@@ -486,7 +556,21 @@ public class JournalEntryService extends TenantAwareService {
         log.info("Updating journal entry {} (ID: {}) for company ID {}",
                 existingEntry.getDocumentNumber(), id, companyId);
 
+        // Bloque A (2026-11-21, decision del usuario): editable while the
+        // month is open, but the previous version is saved complete first
+        // (header + every line, who and when). Same transaction: no edit
+        // can be saved without its snapshot.
+        historyService.record(existingEntry, mapToResponseDTO(existingEntry), JournalEntryHistory.ACTION_UPDATE);
+
         // 4. HEADER UPDATE
+        // FIX (2026-11-21, encontrado probando con Chrome + Firefox): when an
+        // edit only changes LINES (amounts, accounts) and leaves the header
+        // as it was, Hibernate did not increment @Version -- the lines are a
+        // separate (mappedBy) collection -- so a second browser holding the
+        // same old version saved over the first one without any warning.
+        // Touching updated_at makes the header itself dirty, so EVERY edit
+        // bumps the version, whatever field it changed.
+        existingEntry.setUpdatedAt(java.time.LocalDateTime.now());
         existingEntry.setEntryDate(request.getEntryDate());
         existingEntry.setDescription(request.getDescription());
 
@@ -506,7 +590,9 @@ public class JournalEntryService extends TenantAwareService {
         // processLineItems(), never on the client's raw request.
         validateBalance(existingEntry.getItems());
 
-        JournalEntry saved = repository.save(existingEntry);
+        // saveAndFlush (Bloque A): flushing here increments @Version now, so
+        // the response carries the NEW version, not the one just replaced.
+        JournalEntry saved = repository.saveAndFlush(existingEntry);
         log.info("Journal entry {} updated successfully", saved.getDocumentNumber());
 
         return mapToResponseDTO(saved);
@@ -736,6 +822,18 @@ public class JournalEntryService extends TenantAwareService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Journal entry with document number '" + docNum + "' not found"
                 ));
+    }
+
+    /**
+     * Bloque A (2026-11-21): saved versions of an entry (newest first), each
+     * one the full entry as it was before an edit or the annulment.
+     */
+    public List<JournalEntryHistoryDTO> getHistory(Long id) {
+        Long companyId = currentTenantId();
+        repository.findById(id)
+                .filter(e -> e.getCompany().getId().equals(companyId))
+                .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
+        return historyService.list(companyId, id);
     }
 
     public JournalEntryResponseDTO findById(Long id) {
@@ -1054,6 +1152,7 @@ public class JournalEntryService extends TenantAwareService {
         dto.setAnnulled(entry.isAnnulled());
         dto.setAnnulledAt(entry.getAnnulledAt());
         dto.setAnnulmentReason(entry.getAnnulmentReason());
+        dto.setVersion(entry.getVersion());
 
         List<JournalEntryResponseDTO.ItemResponse> items = entry.getItems().stream()
                 .map(item -> {

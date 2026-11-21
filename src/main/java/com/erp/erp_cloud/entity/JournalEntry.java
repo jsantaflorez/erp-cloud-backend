@@ -77,6 +77,20 @@ public class  JournalEntry extends BaseEntity implements Serializable {
     @Column(name = "annulment_reason")
     private String annulmentReason;
 
+    // Bloque A (2026-11-21, F1-20): optimistic lock. Hibernate increments it
+    // on every update; JournalEntryService.update() also compares it with
+    // the version the client loaded, so a second user saving an older copy
+    // gets ENTRY_MODIFIED_BY_OTHER_USER instead of overwriting the first.
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
+    // Bloque A (2026-11-21, F1-03): client-generated key (Idempotency-Key
+    // header). Unique per company (V7), so the same create request arriving
+    // twice returns the entry already created instead of a second one.
+    @Column(name = "idempotency_key", length = 64)
+    private String idempotencyKey;
+
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id", nullable = false)

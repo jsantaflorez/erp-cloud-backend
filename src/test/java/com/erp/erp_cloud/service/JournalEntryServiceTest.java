@@ -39,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -71,6 +72,7 @@ class JournalEntryServiceTest {
     @Mock private AccountingPeriodService accountingPeriodService;
     @Mock private CompanyRepository companyRepository;
     @Mock private TaxRepository taxRepository;
+    @Mock private JournalEntryHistoryService historyService;
 
     private JournalEntryService service;
     private Company testCompany;
@@ -84,7 +86,8 @@ class JournalEntryServiceTest {
         TenantContext.setCurrentTenant(COMPANY_ID);
 
         service = new JournalEntryService(repository, accountRepository, thirdPartyRepository,
-                costCenterRepository, docTypeService, accountingPeriodService, companyRepository, taxRepository);
+                costCenterRepository, docTypeService, accountingPeriodService, companyRepository, taxRepository,
+                historyService);
 
         testCompany = new Company();
         testCompany.setId(COMPANY_ID);
@@ -108,6 +111,8 @@ class JournalEntryServiceTest {
             if (e.getId() == null) e.setId(500L);
             return e;
         });
+        // update() flushes (Bloque A) so the response carries the new @Version.
+        when(repository.saveAndFlush(any(JournalEntry.class))).thenAnswer(invocation -> invocation.getArgument(0));
         // accountingPeriodService.validateDateIsOpen(...) is void -- Mockito's
         // default is a no-op, i.e. "period is open", unless a test stubs it
         // with doThrow(...) to simulate a closed period.
@@ -850,6 +855,123 @@ class JournalEntryServiceTest {
         tp.setBusinessName("TERCERO INACTIVO " + id);
         when(thirdPartyRepository.findById(id)).thenReturn(Optional.of(tp));
         return tp;
+    }
+
+    @Test
+    @DisplayName("update() saves the previous version before changing anything (Bloque A)")
+    void update_recordsPreviousVersion() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        String originalDescription = entry.getDescription();
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+        ArgumentCaptor<JournalEntryResponseDTO> before = ArgumentCaptor.forClass(JournalEntryResponseDTO.class);
+
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.setDescription("Corrected description");
+        service.update(999L, request);
+
+        verify(historyService).record(eq(entry), before.capture(), eq(JournalEntryHistory.ACTION_UPDATE));
+        assertThat(before.getValue().getDescription()).isEqualTo(originalDescription);
+    }
+
+    @Test
+    @DisplayName("annul() saves the entry as it was before annulling it (Bloque A)")
+    void annul_recordsPreviousVersion() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+        ArgumentCaptor<JournalEntryResponseDTO> before = ArgumentCaptor.forClass(JournalEntryResponseDTO.class);
+
+        service.annul(999L, annulmentRequest("x"));
+
+        verify(historyService).record(eq(entry), before.capture(), eq(JournalEntryHistory.ACTION_ANNUL));
+        assertThat(before.getValue().isAnnulled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("update() of a stale copy saves no history either (Bloque A)")
+    void update_staleVersion_recordsNothing() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.setVersion(3L);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.setVersion(2L);
+
+        assertThatThrownBy(() -> service.update(999L, request)).isInstanceOf(InvalidOperationException.class);
+        verify(historyService, never()).record(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("update() rejects a stale copy: someone saved the entry after the client loaded it (Bloque A)")
+    void update_staleVersion_throws() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.setVersion(3L);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.setVersion(2L);
+
+        assertThatThrownBy(() -> service.update(999L, request))
+                .isInstanceOf(InvalidOperationException.class)
+                .hasMessageContaining("modified by another user");
+        verify(repository, never()).saveAndFlush(any(JournalEntry.class));
+    }
+
+    @Test
+    @DisplayName("update() always dirties the header, so the version goes up even when only lines change (Bloque A)")
+    void update_linesOnly_touchesHeader() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        java.time.LocalDateTime before = java.time.LocalDateTime.now().minusDays(1);
+        entry.setUpdatedAt(before);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        // same date and description as the entry: only the line amounts change
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.setDescription(entry.getDescription());
+        request.getItems().get(0).setDebit(new BigDecimal("1500000.00"));
+        request.getItems().get(1).setCredit(new BigDecimal("1500000.00"));
+
+        service.update(999L, request);
+
+        assertThat(entry.getUpdatedAt()).isAfter(before);
+    }
+
+    @Test
+    @DisplayName("update() with the current version saves normally (Bloque A)")
+    void update_currentVersion_saves() {
+        JournalEntry entry = existingEntry(LocalDate.now());
+        entry.setVersion(3L);
+        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+
+        JournalEntryRequest request = balancedRequest(entry.getEntryDate());
+        request.setVersion(3L);
+
+        service.update(999L, request);
+
+        verify(repository).saveAndFlush(entry);
+    }
+
+    @Test
+    @DisplayName("create() with an idempotency key already used returns that entry and creates nothing (Bloque A)")
+    void create_idempotentReplay_returnsExisting() {
+        JournalEntry existing = existingEntry(LocalDate.now());
+        existing.setIdempotencyKey("k-123");
+        when(repository.findByCompanyIdAndIdempotencyKey(COMPANY_ID, "k-123")).thenReturn(Optional.of(existing));
+
+        JournalEntryResponseDTO result = service.create(balancedRequest(LocalDate.now()), "k-123");
+
+        assertThat(result.getId()).isEqualTo(999L);
+        verify(repository, never()).save(any(JournalEntry.class));
+        verify(docTypeService, never()).getNextConsecutive(any());
+    }
+
+    @Test
+    @DisplayName("create() stores a new idempotency key on the entry (Bloque A)")
+    void create_storesIdempotencyKey() {
+        ArgumentCaptor<JournalEntry> captor = ArgumentCaptor.forClass(JournalEntry.class);
+
+        service.create(balancedRequest(LocalDate.now()), "  k-456 ");
+
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getIdempotencyKey()).isEqualTo("k-456");
     }
 
     @Test

@@ -2,7 +2,11 @@ package com.erp.erp_cloud.repository;
 
 import com.erp.erp_cloud.entity.AccountingPeriod;
 import com.erp.erp_cloud.entity.Company;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -19,6 +23,23 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
      * ADAPTED: Finds a specific period by company primitive ID, year, and month.
      */
     Optional<AccountingPeriod> findByCompanyIdAndYearAndMonth(Long companyId, Integer year, Integer month);
+
+    /**
+     * Bloque A (2026-11-21, F1-06): shared lock (SELECT ... FOR SHARE) on the
+     * period row of a posting date, taken by every write to a journal entry
+     * BEFORE it checks that the period is open. Closing the month UPDATEs or
+     * INSERTs that same row, so it now waits for in-flight postings to
+     * commit, and a posting that starts after the close sees it closed.
+     * When the row does not exist yet (a month never closed), InnoDB still
+     * locks the gap on the unique key (company_id, year, month), which blocks
+     * the INSERT that closing the month would do. The result is ignored: the
+     * lock is the point.
+     */
+    @Lock(LockModeType.PESSIMISTIC_READ)
+    @Query("SELECT p FROM AccountingPeriod p WHERE p.company.id = :companyId AND p.year = :year AND p.month = :month")
+    List<AccountingPeriod> lockPeriodForPosting(@Param("companyId") Long companyId,
+                                                @Param("year") Integer year,
+                                                @Param("month") Integer month);
 
     /**
      * ADAPTED: Retrieves all periods for a company ID, ordered by date descending.

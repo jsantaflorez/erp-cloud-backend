@@ -774,6 +774,13 @@ public class AccountingPeriodService extends TenantAwareService {
         int year = date.getYear();
         int month = date.getMonthValue();
 
+        // Bloque A (2026-11-21, F1-06): lock the period row (or its gap) for
+        // the rest of the caller's transaction BEFORE reading whether it is
+        // open, so a concurrent month close cannot slip in between this check
+        // and the caller's commit. Every caller is a write (create, update,
+        // annul, SIEWIN import), so the lock lives as long as that write.
+        repository.lockPeriodForPosting(companyId, year, month);
+
         if (repository.existsByCompanyIdAndYearAndYearCloseTrue(companyId, year)) {
             throw new InvalidOperationException("The Fiscal Year " + year + " is CLOSED.", "FISCAL_YEAR_CLOSED");
         }

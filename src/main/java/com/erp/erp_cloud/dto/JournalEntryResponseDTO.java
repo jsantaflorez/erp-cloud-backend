@@ -31,6 +31,9 @@ public class JournalEntryResponseDTO {
     // type a full edit that only fails -- with everything typed lost --
     // once they click Guardar and hit validateDateIsOpen()'s rejection.
     private boolean periodClosed;
+    // Bloque A (2026-11-21): optimistic-lock version; the edit form sends it
+    // back on PUT so a stale copy cannot overwrite someone else's save.
+    private Long version;
     private List<ItemResponse> items;
 
     @Data

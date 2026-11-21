@@ -108,6 +108,12 @@ public class AccountingPeriod {
     @Column(name = "reopening_notes", length = 500)
     private String reopeningNotes;
 
+    // Bloque A (2026-11-21, F1-06/F1-20): optimistic lock, so two admins
+    // closing/reopening the same month at once cannot overwrite each other.
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
     // --- YEAR-END CLOSING (2026-10-03) ---
     // Only ever populated on the month=12 record of a year, the same
     // record that already carries isYearClose. gainAccount/lossAccount

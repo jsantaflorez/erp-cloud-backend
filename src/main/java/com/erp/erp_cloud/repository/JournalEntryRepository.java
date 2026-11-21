@@ -129,6 +129,9 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
      */
     Optional<JournalEntry> findByCompanyIdAndDocumentNumberAndActiveTrue(Long companyId, String documentNumber);
 
+    /** Bloque A (2026-11-21, F1-03): the entry a client idempotency key already created. */
+    Optional<JournalEntry> findByCompanyIdAndIdempotencyKey(Long companyId, String idempotencyKey);
+
     /**
      * Alias for compatibility with existing Service logic.
      * ADAPTED: Accepts Long companyId and routes to the active-check query method.
