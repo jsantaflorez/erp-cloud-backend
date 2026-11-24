@@ -13,6 +13,9 @@ import java.util.stream.Stream;
 
 public class UserPrincipal implements UserDetails {
 
+    /** Prefix of permission authorities, so they never look like a ROLE_ (2026-11-21). */
+    public static final String PERMISSION_PREFIX = "PERM_";
+
     private final Long id;
     private final String email;
     private final String password;
@@ -35,10 +38,18 @@ public class UserPrincipal implements UserDetails {
         this.accountNonLocked = user.getLockedUntil() == null
                 || !user.getLockedUntil().isAfter(java.time.LocalDateTime.now());
 
-        // Unifies roles (with ROLE_ prefix) and granular permissions into a single collection
+        // Unifies roles (with ROLE_ prefix) and granular permissions into a single collection.
+        // FIX (2026-11-21): permissions now carry a PERM_ prefix. The permission
+        // codes of the ROLE resource are literally ROLE_CREATE, ROLE_READ,
+        // ROLE_UPDATE and ROLE_DELETE, so without a prefix they looked like
+        // four extra ROLES ("CREATE", "READ"...) to anything that reads roles
+        // as "authorities starting with ROLE_" -- the login response did, and
+        // the header showed "ADMINISTRADOR +4". Nothing checks permission
+        // authorities by name yet (no hasAuthority anywhere), so the prefix
+        // changes no access rule; it only keeps roles and permissions apart.
         this.authorities = Stream.concat(
                 roleCodes.stream().map(role -> new SimpleGrantedAuthority(role)),
-                permissionCodes.stream().map(SimpleGrantedAuthority::new)
+                permissionCodes.stream().map(code -> new SimpleGrantedAuthority(PERMISSION_PREFIX + code))
         ).collect(Collectors.toSet());
     }
 

@@ -74,6 +74,27 @@ public class JournalEntryHistoryService {
                 entry.getDocumentNumber(), row.getEntryVersion(), action, row.getChangedBy());
     }
 
+    /**
+     * Number of saved versions of each entry in {@code entryIds} (entries
+     * without history are absent from the map). One query per list page.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Map<Long, Long> countByEntry(Long companyId, java.util.Collection<Long> entryIds) {
+        if (entryIds == null || entryIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        java.util.Map<Long, Long> counts = new java.util.HashMap<>();
+        for (Object[] row : repository.countByEntryIds(companyId, entryIds)) {
+            counts.put((Long) row[0], ((Number) row[1]).longValue());
+        }
+        return counts;
+    }
+
+    @Transactional(readOnly = true)
+    public long count(Long companyId, Long journalEntryId) {
+        return repository.countByCompanyIdAndJournalEntryId(companyId, journalEntryId);
+    }
+
     /** Saved versions of an entry, newest first. Caller checks the entry belongs to the company. */
     @Transactional(readOnly = true)
     public List<JournalEntryHistoryDTO> list(Long companyId, Long journalEntryId) {

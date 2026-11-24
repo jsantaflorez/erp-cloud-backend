@@ -1342,6 +1342,20 @@ class JournalEntryServiceTest {
     }
 
     @Test
+    @DisplayName("listEntries() fills how many saved versions each entry has, with one lookup for the page (Bloque A)")
+    void listEntries_fillsHistoryCount() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(repository.searchEntries(eq(COMPANY_ID), any(), any(), any(), any(), eq(pageable)))
+                .thenReturn(new PageImpl<>(List.of(existingEntry(LocalDate.now()))));
+        when(historyService.countByEntry(eq(COMPANY_ID), any())).thenReturn(java.util.Map.of(999L, 2L));
+
+        Page<JournalEntryResponseDTO> result = service.listEntries(null, null, null, null, pageable);
+
+        assertThat(result.getContent().get(0).getHistoryCount()).isEqualTo(2L);
+        verify(historyService).countByEntry(eq(COMPANY_ID), eq(List.of(999L)));
+    }
+
+    @Test
     @DisplayName("listEntries() passes a null documentTypeId through when no document type filter is requested")
     void listEntries_withoutDocumentTypeFilter_passesNull() {
         Pageable pageable = PageRequest.of(0, 10);

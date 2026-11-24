@@ -34,6 +34,10 @@ public class JournalEntryResponseDTO {
     // Bloque A (2026-11-21): optimistic-lock version; the edit form sends it
     // back on PUT so a stale copy cannot overwrite someone else's save.
     private Long version;
+    // Bloque A (2026-11-21): how many saved versions the entry has in
+    // journal_entry_history (edits + annulment). Filled by the list and by
+    // findById; the list shows a history icon only when it is > 0.
+    private long historyCount;
     private List<ItemResponse> items;
 
     @Data

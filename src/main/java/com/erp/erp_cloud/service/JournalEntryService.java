@@ -811,8 +811,16 @@ public class JournalEntryService extends TenantAwareService {
         Long companyId = currentTenantId();
         log.debug("Listing journal entries for company ID: {}", companyId);
 
-        return repository.searchEntries(companyId, searchTerm, start, end, documentTypeId, pageable)
+        Page<JournalEntryResponseDTO> page = repository
+                .searchEntries(companyId, searchTerm, start, end, documentTypeId, pageable)
                 .map(this::mapToResponseDTO);
+
+        // Bloque A (2026-11-21): how many saved versions each entry of the
+        // page has, in ONE query, for the history icon in the list.
+        Map<Long, Long> counts = historyService.countByEntry(companyId,
+                page.getContent().stream().map(JournalEntryResponseDTO::getId).toList());
+        page.getContent().forEach(dto -> dto.setHistoryCount(counts.getOrDefault(dto.getId(), 0L)));
+        return page;
     }
 
     public JournalEntryResponseDTO findByDocumentNumber(String docNum) {
@@ -852,6 +860,7 @@ public class JournalEntryService extends TenantAwareService {
         // list screen doesn't pay an extra isPeriodClosed() query per row.
         LocalDate entryDate = entry.getEntryDate();
         dto.setPeriodClosed(accountingPeriodService.isPeriodClosed(entryDate.getYear(), entryDate.getMonthValue()));
+        dto.setHistoryCount(historyService.count(companyId, id));
         return dto;
     }
     // ═══════════════════════════════════════════════════════════
