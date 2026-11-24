@@ -701,32 +701,61 @@ class JournalEntryServiceTest {
         return req;
     }
 
+    // Bloque A fase 3 (2026-11-24): ANULACION reserved type for the reverse.
+    private DocumentType reversalDocType() {
+        DocumentType dt = new DocumentType();
+        dt.setId(77L);
+        dt.setCode("ANULACION");
+        dt.setPrefix("ANU");
+        dt.setCompany(testCompany);
+        when(docTypeService.findOrCreateReversalDocumentType(COMPANY_ID)).thenReturn(dt);
+        when(docTypeService.getNextConsecutive(77L)).thenReturn(1L);
+        return dt;
+    }
+
     @Test
-    @DisplayName("annul() zeroes out every item's debit/credit and prefixes the description")
-    void annul_success_neutralizesAndPrefixes() {
+    @DisplayName("annul() leaves the original intact and posts an ANULACION reverse on the same date")
+    void annul_success_createsReverseAndKeepsOriginal() {
+        DocumentType anulacion = reversalDocType();
         JournalEntry entry = existingEntry(LocalDate.now());
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
 
         JournalEntryResponseDTO result = service.annul(999L, annulmentRequest("Posted in error"));
 
+        // Original: marked annulled, lines and description untouched.
         assertThat(entry.isAnnulled()).isTrue();
         assertThat(entry.getAnnulmentReason()).isEqualTo("Posted in error");
-        assertThat(entry.getDescription()).startsWith("[ANNULLED] ");
-        entry.getItems().forEach(i -> {
-            assertThat(i.getDebit()).isEqualByComparingTo(BigDecimal.ZERO);
-            assertThat(i.getCredit()).isEqualByComparingTo(BigDecimal.ZERO);
-        });
-        // Regression guard: the response DTO must actually reflect the
-        // annulment (previously mapToResponseDTO never copied these three
-        // fields, so every response silently reported annulled=false).
+        assertThat(entry.getDescription()).isEqualTo("Original description");
+        assertThat(entry.getItems().get(0).getDebit()).isEqualByComparingTo("100.00");
+        assertThat(entry.getItems().get(1).getCredit()).isEqualByComparingTo("100.00");
+
+        // Reverse: reserved type, own consecutive, same date, amounts swapped.
+        JournalEntry reversal = entry.getReversalEntry();
+        assertThat(reversal).isNotNull();
+        assertThat(reversal.getDocumentType()).isSameAs(anulacion);
+        assertThat(reversal.getDocumentNumber()).isEqualTo("ANU-1");
+        assertThat(reversal.getEntryDate()).isEqualTo(entry.getEntryDate());
+        assertThat(reversal.getReversalOf()).isSameAs(entry);
+        assertThat(reversal.isReversal()).isTrue();
+        assertThat(reversal.getDescription()).isEqualTo("Anulación de FV-1: Posted in error");
+        assertThat(reversal.getItems()).hasSize(2);
+        assertThat(reversal.getItems().get(0).getAccount()).isSameAs(debitAccount);
+        assertThat(reversal.getItems().get(0).getDebit()).isEqualByComparingTo("0.00");
+        assertThat(reversal.getItems().get(0).getCredit()).isEqualByComparingTo("100.00");
+        assertThat(reversal.getItems().get(1).getDebit()).isEqualByComparingTo("100.00");
+        assertThat(reversal.getItems().get(1).getCredit()).isEqualByComparingTo("0.00");
+
+        // Response: annulment fields and the link to the reverse.
         assertThat(result.isAnnulled()).isTrue();
         assertThat(result.getAnnulmentReason()).isEqualTo("Posted in error");
         assertThat(result.getAnnulledAt()).isNotNull();
+        assertThat(result.getReversalDocumentNumber()).isEqualTo("ANU-1");
     }
 
     @Test
     @DisplayName("annul() records the authenticated user in annulledBy (Bloque 0.2)")
     void annul_recordsAuthenticatedUser() {
+        reversalDocType();
         UserPrincipal principal = new UserPrincipal(7L, "contador@firma.com", "x", "Contador", COMPANY_ID, List.of());
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
@@ -741,6 +770,7 @@ class JournalEntryServiceTest {
     @Test
     @DisplayName("annul() without an authenticated user records 'system', never NULL")
     void annul_withoutAuthentication_recordsSystem() {
+        reversalDocType();
         JournalEntry entry = existingEntry(LocalDate.now());
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
 
@@ -750,15 +780,40 @@ class JournalEntryServiceTest {
     }
 
     @Test
-    @DisplayName("annul() does not double-prefix a description that's already marked annulled")
-    void annul_descriptionAlreadyPrefixed_doesNotDoublePrefix() {
-        JournalEntry entry = existingEntry(LocalDate.now());
-        entry.setDescription("[ANNULLED] Original description");
-        when(repository.findById(999L)).thenReturn(Optional.of(entry));
+    @DisplayName("annul() refuses to annul a reverse (ANULACION) entry")
+    void annul_reversalEntry_throws() {
+        JournalEntry original = existingEntry(LocalDate.now());
+        JournalEntry reversal = existingEntry(LocalDate.now());
+        reversal.setId(1000L);
+        reversal.setReversalOf(original);
+        when(repository.findById(1000L)).thenReturn(Optional.of(reversal));
 
-        service.annul(999L, annulmentRequest("x"));
+        assertThatThrownBy(() -> service.annul(1000L, annulmentRequest("x")))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo("REVERSAL_ENTRY_IMMUTABLE"));
+        verify(docTypeService, never()).findOrCreateReversalDocumentType(any());
+    }
 
-        assertThat(entry.getDescription()).isEqualTo("[ANNULLED] Original description");
+    @Test
+    @DisplayName("update() refuses to edit a reverse (ANULACION) entry")
+    void update_reversalEntry_throws() {
+        JournalEntry reversal = existingEntry(LocalDate.now());
+        reversal.setReversalOf(existingEntry(LocalDate.now()));
+        when(repository.findById(999L)).thenReturn(Optional.of(reversal));
+
+        assertThatThrownBy(() -> service.update(999L, balancedRequest(reversal.getEntryDate())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo("REVERSAL_ENTRY_IMMUTABLE"));
+    }
+
+    @Test
+    @DisplayName("create() rejects ANULACION as a manually-chosen document type")
+    void create_reversalDocType_throws() {
+        testDocType.setCode("ANULACION");
+
+        assertThatThrownBy(() -> service.create(balancedRequest(LocalDate.now())))
+                .isInstanceOfSatisfying(InvalidOperationException.class, ex ->
+                        assertThat(ex.getErrorCode()).isEqualTo("REVERSAL_DOC_TYPE_RESERVED"));
     }
 
     @Test

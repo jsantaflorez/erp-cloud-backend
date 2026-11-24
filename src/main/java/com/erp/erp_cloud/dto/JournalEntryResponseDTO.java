@@ -38,6 +38,15 @@ public class JournalEntryResponseDTO {
     // journal_entry_history (edits + annulment). Filled by the list and by
     // findById; the list shows a history icon only when it is > 0.
     private long historyCount;
+
+    // Bloque A fase 3 (2026-11-24): annulment by reverse. On an annulled
+    // original, the ANULACION entry that cancels it; on that reverse entry,
+    // the original it cancels. Null otherwise (and on entries annulled
+    // before V9, or by a system process, which were zeroed instead).
+    private Long reversalEntryId;
+    private String reversalDocumentNumber;
+    private Long reversalOfEntryId;
+    private String reversalOfDocumentNumber;
     private List<ItemResponse> items;
 
     @Data

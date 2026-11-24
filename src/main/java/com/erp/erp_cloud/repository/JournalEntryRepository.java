@@ -467,11 +467,12 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
      * way; AccountingPeriodService.closeYear calls this twice, once per
      * case, and does something different with the numbers each time.
      *
-     * No separate "annulled" filter needed: JournalEntryService.annul()
-     * zeroes out an annulled entry's own item amounts in place (see its
-     * Javadoc), so a plain SUM here already nets an annulled entry to
-     * zero on its own -- the e.active = true filter (same convention as
-     * every other query in this repository) is enough.
+     * No separate "annulled" filter needed: an annulled entry nets to zero
+     * on its own -- either its lines were zeroed in place (before V9, and
+     * the system processes still do that) or, since Bloque A fase 3
+     * (2026-11-24), its ANULACION reverse on the same date posts the exact
+     * opposite amounts. A plain SUM covers both; the e.active = true
+     * filter (same convention as every other query here) is enough.
      *
      * Each row's third party / cost center (index 1 / 2) may come back
      * null when that line didn't carry one -- callers must group
@@ -526,6 +527,11 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
      * -- category uses the same COALESCE-self trick as the string
      * filters below it, now that it's optional too.
      *
+     * Bloque A fase 3 (2026-11-24): ANULACION reverse entries are excluded
+     * too (e.reversalOf IS NULL). Their lines mirror the annulled original,
+     * tax link included; with the original excluded, keeping the reverse
+     * would report a tax event that never existed, with the opposite sign.
+     *
      * Annulled entries are excluded outright (e.active = true, e.annulled
      * = false) -- a neutralized voucher never represented a real tax
      * event for declaration purposes; annul() zeroes debit/credit but
@@ -560,6 +566,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         WHERE e.company.id = :companyId
           AND e.active = true
           AND e.annulled = false
+          AND e.reversalOf IS NULL
           AND tx.category = COALESCE(:category, tx.category)
           AND e.entryDate BETWEEN :startDate AND :endDate
           AND tx.type = COALESCE(:taxType, tx.type)
@@ -611,6 +618,7 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
         WHERE e.company.id = :companyId
           AND e.active = true
           AND e.annulled = false
+          AND e.reversalOf IS NULL
           AND (:startDate IS NULL OR e.entryDate >= :startDate)
           AND (:endDate IS NULL OR e.entryDate <= :endDate)
           AND (

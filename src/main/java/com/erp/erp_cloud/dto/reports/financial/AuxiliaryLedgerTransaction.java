@@ -101,6 +101,13 @@ public class AuxiliaryLedgerTransaction {
      */
     private boolean annulled;
 
+    /**
+     * Bloque A fase 3 (2026-11-24): true when the row belongs to an ANULACION
+     * reverse entry (it cancels an annulled document with the opposite
+     * amounts), so the report can label it instead of showing a plain line.
+     */
+    private boolean reversal;
+
     // ═══════════════════════════════════════════════════════════
     // HELPER METHODS
     // ═══════════════════════════════════════════════════════════

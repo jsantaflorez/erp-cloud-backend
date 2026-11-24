@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Configuration class for SpringDoc OpenAPI (Swagger).
  * Defines the API documentation metadata and global dual-layered security requirements
- * for the Multitenant ERP Cloud environment.
+ * for the multitenant ZORU environment (product renamed from Integra / ERP Cloud, 2026-11-24).
  */
 @Configuration
 public class OpenApiConfig {
@@ -28,11 +28,11 @@ public class OpenApiConfig {
                  * API Metadata: Title, version, and general operational description
                  */
                 .info(new Info()
-                        .title("ERP-CLOUD API")
+                        .title("ZORU API")
                         .version("1.0")
-                        .description("Enterprise Resource Planning - Cloud Accounting Module")
+                        .description("ZORU - Cloud Accounting Module")
                         .contact(new Contact()
-                                .name("ERP Cloud Development Team")
+                                .name("ZORU Development Team")
                                 .email("dev-support@erpcloud.com")))
 
                 /*

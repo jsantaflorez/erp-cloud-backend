@@ -43,6 +43,12 @@ public class DocumentTypeService extends TenantAwareService {
     // AccountingPeriodService.buildAndSaveClosingEntry() for CIERRE.
     public static final String OPENING_DOC_TYPE_CODE = "APERTURA";
 
+    // Bloque A fase 3 (2026-11-24, decision 3 del usuario): reserved type of
+    // the reverse entries created when a document is annulled (ANU-1,
+    // ANU-2...). Same reserved pattern as CIERRE/APERTURA: never selectable
+    // by hand; JournalEntryService.annul() is the only one that uses it.
+    public static final String REVERSAL_DOC_TYPE_CODE = "ANULACION";
+
     private final DocumentTypeRepository repository;
     private final ChartOfAccountsRepository accountRepository;
     private final CompanyRepository companyRepository;
@@ -243,6 +249,23 @@ public class DocumentTypeService extends TenantAwareService {
                     entity.setActive(true);
                     entity.setAccounting(true);
                     log.info("Auto-creating 'APERTURA' document type for company ID: {}", companyId);
+                    return repository.save(entity);
+                });
+    }
+
+    // Bloque A fase 3 (2026-11-24): same pattern, for the ANULACION type.
+    public DocumentType findOrCreateReversalDocumentType(Long companyId) {
+        return repository.findByCompanyIdAndCode(companyId, REVERSAL_DOC_TYPE_CODE)
+                .orElseGet(() -> {
+                    DocumentType entity = new DocumentType();
+                    entity.setCompany(companyRepository.getReferenceById(companyId));
+                    entity.setCode(REVERSAL_DOC_TYPE_CODE);
+                    entity.setName("Anulación de Documentos (Reverso)");
+                    entity.setPrefix("ANU");
+                    entity.setCurrentConsecutive(0L);
+                    entity.setActive(true);
+                    entity.setAccounting(true);
+                    log.info("Auto-creating 'ANULACION' document type for company ID: {}", companyId);
                     return repository.save(entity);
                 });
     }

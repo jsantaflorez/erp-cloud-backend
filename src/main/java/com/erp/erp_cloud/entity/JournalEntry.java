@@ -91,6 +91,25 @@ public class  JournalEntry extends BaseEntity implements Serializable {
     @Column(name = "idempotency_key", length = 64)
     private String idempotencyKey;
 
+    // Bloque A fase 3 (2026-11-24, V9): annulment by reverse. On the
+    // ORIGINAL, reversalEntry is the ANULACION entry that cancels it; on the
+    // REVERSE, reversalOf is the original. Excluded from equals/hashCode:
+    // the two point at each other and would recurse forever.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reversal_entry_id")
+    @EqualsAndHashCode.Exclude
+    private JournalEntry reversalEntry;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reversal_of_id", unique = true)
+    @EqualsAndHashCode.Exclude
+    private JournalEntry reversalOf;
+
+    /** True for a system-generated ANULACION entry (it reverses another one). */
+    public boolean isReversal() {
+        return reversalOf != null;
+    }
+
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "company_id", nullable = false)

@@ -213,6 +213,14 @@ public class JournalEntryService extends TenantAwareService {
                     "OPENING_DOC_TYPE_RESERVED");
         }
 
+        // Bloque A fase 3 (2026-11-24): ANULACION is reserved for the reverse
+        // entries annul() creates; a hand-made one would cancel nothing.
+        if (DocumentTypeService.REVERSAL_DOC_TYPE_CODE.equals(docType.getCode())) {
+            throw new InvalidOperationException(
+                    "The annulment document type is reserved for the reverse entries created when a document is annulled.",
+                    "REVERSAL_DOC_TYPE_RESERVED");
+        }
+
         return docType;
     }
 
@@ -315,7 +323,18 @@ public class JournalEntryService extends TenantAwareService {
     // ═══════════════════════════════════════════════════════════
 
     /**
-     * Annuls a journal entry by neutralizing its financial impact.
+     * Annuls a journal entry by REVERSE (Bloque A fase 3, 2026-11-24).
+     *
+     * The original stays exactly as it was posted -- only marked annulled,
+     * with who, when and why -- and a new entry of the reserved ANULACION
+     * type (ANU-n, its own consecutive) is posted on the SAME date with every
+     * line's debit and credit swapped. Together they net to zero in every
+     * balance, while the books still show what was posted and what cancelled
+     * it (decisions 2 and 3 of the user, 2026-11-21).
+     *
+     * Before V9 this zeroed the original's lines in place. The system
+     * processes that annul on their own (CIERRE recalculation, reopenYear,
+     * SIEWIN APERTURA replacement) still do that -- user decision 2026-11-24.
      */
     @Transactional
     public JournalEntryResponseDTO annul(Long id, JournalEntryRequest.AnnulmentRequest annulRequest) {
@@ -340,12 +359,22 @@ public class JournalEntryService extends TenantAwareService {
                     "Cannot annul an inactive (deleted) journal entry.", "ENTRY_INACTIVE_IMMUTABLE");
         }
 
-        log.info("Annulling journal entry {} (ID: {})", entry.getDocumentNumber(), id);
+        // A reverse entry cancels another one; annulling it would bring the
+        // original's effect back without un-annulling the original.
+        if (entry.isReversal()) {
+            throw new InvalidOperationException(
+                    "A reverse (annulment) entry cannot be annulled.", "REVERSAL_ENTRY_IMMUTABLE");
+        }
+
+        log.info("Annulling journal entry {} (ID: {}) by reverse", entry.getDocumentNumber(), id);
 
         // Bloque A (2026-11-21): keep the entry as it was, before annulling.
         historyService.record(entry, mapToResponseDTO(entry), JournalEntryHistory.ACTION_ANNUL);
 
-        // 4. FINANCIAL NEUTRALIZATION
+        // 4. REVERSE ENTRY (same date, debits and credits swapped)
+        JournalEntry reversal = repository.save(buildReversalEntry(entry, annulRequest.getReason(), companyId));
+
+        // 5. MARK THE ORIGINAL -- its lines are NOT touched any more.
         entry.setAnnulled(true);
         entry.setAnnulledAt(java.time.LocalDateTime.now());
         // FIX (2026-11-19, auditoria F1-02 / Bloque 0.2): a manual annulment
@@ -353,31 +382,59 @@ public class JournalEntryService extends TenantAwareService {
         // system processes (year close, SIEWIN re-import) filled it in.
         entry.setAnnulledBy(currentActor());
         entry.setAnnulmentReason(annulRequest.getReason());
-
-        for (JournalEntryItem item : entry.getItems()) {
-            item.setDebit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-            item.setCredit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        }
-
-        // 5. AUDIT LOGGING
-        // BUG FIX: description is an optional column (nullable) -- a
-        // journal entry created without one has getDescription() == null,
-        // and the original code called .startsWith() on it unconditionally,
-        // throwing a NullPointerException on every annulment attempt for
-        // any entry that happened to have no description (found testing
-        // annulment of IM-4, document type IMK, which had none).
-        String prefix = "[ANNULLED] ";
-        String currentDescription = entry.getDescription();
-        if (currentDescription == null) {
-            entry.setDescription(prefix.trim());
-        } else if (!currentDescription.startsWith(prefix)) {
-            entry.setDescription(prefix + currentDescription);
-        }
+        entry.setReversalEntry(reversal);
 
         JournalEntry savedEntry = repository.save(entry);
-        log.info("Journal entry {} successfully neutralized.", savedEntry.getDocumentNumber());
+        log.info("Journal entry {} annulled by reverse {}.",
+                savedEntry.getDocumentNumber(), reversal.getDocumentNumber());
 
         return mapToResponseDTO(savedEntry);
+    }
+
+    /**
+     * Builds the ANULACION entry that cancels {@code original}: same date,
+     * same accounts / third parties / cost centers / tax link, debit and
+     * credit swapped on every line. Never goes through create(): it must use
+     * the reserved type create() refuses, and its lines are a mirror of an
+     * entry that was already validated when it was posted.
+     */
+    private JournalEntry buildReversalEntry(JournalEntry original, String reason, Long companyId) {
+        DocumentType docType = docTypeService.findOrCreateReversalDocumentType(companyId);
+
+        JournalEntry reversal = new JournalEntry();
+        reversal.setCompany(companyRepository.getReferenceById(companyId));
+        reversal.setDocumentType(docType);
+        reversal.setEntryDate(original.getEntryDate());
+        reversal.setReversalOf(original);
+
+        Long nextNumber = docTypeService.getNextConsecutive(docType.getId());
+        reversal.setConsecutive(nextNumber);
+        reversal.setDocumentNumber(generateDocNumber(docType, nextNumber));
+        if (repository.existsByCompanyIdAndDocumentNumber(companyId, reversal.getDocumentNumber())) {
+            log.error("Duplicate document number detected: {}", reversal.getDocumentNumber());
+            throw new InvalidOperationException(
+                    "Document number already exists. This may be a concurrency issue. Please retry.");
+        }
+
+        String description = "Anulación de " + original.getDocumentNumber()
+                + (reason != null && !reason.isBlank() ? ": " + reason.trim() : "");
+        reversal.setDescription(description.length() > 255 ? description.substring(0, 255) : description);
+
+        for (JournalEntryItem source : original.getItems()) {
+            JournalEntryItem line = new JournalEntryItem();
+            line.setAccount(source.getAccount());
+            line.setDebit(scaleAmount(source.getCredit()));
+            line.setCredit(scaleAmount(source.getDebit()));
+            line.setDescription(source.getDescription());
+            line.setThirdParty(source.getThirdParty());
+            line.setCostCenter(source.getCostCenter());
+            line.setTax(source.getTax());
+            line.setTaxBase(source.getTaxBase());
+            reversal.addItem(line);
+        }
+        // Mirror of a balanced entry is balanced; checked anyway, it is cheap.
+        validateBalance(reversal.getItems());
+        return reversal;
     }
 
     /**
@@ -411,14 +468,17 @@ public class JournalEntryService extends TenantAwareService {
                 .filter(e -> e.getCompany().getId().equals(companyId))
                 .orElseThrow(() -> new ResourceNotFoundException("Journal Entry", id));
 
-        // An annulled entry's items were zeroed out by annul() above --
-        // duplicating it would either produce a useless all-zero entry or
-        // fail outright against the "each line needs a debit or credit"
-        // rule in processLineItems(), with a confusing error. Blocked here
-        // with a clear message instead.
+        // An annulled entry is not a model to repeat (and entries annulled
+        // before V9, or by a system process, have all-zero lines). Blocked
+        // with a clear message.
         if (source.isAnnulled()) {
             throw new InvalidOperationException(
                     "An annulled journal entry cannot be duplicated.", "CANNOT_DUPLICATE_ANNULLED_ENTRY");
+        }
+        // Bloque A fase 3: a reverse entry uses the reserved ANULACION type.
+        if (source.isReversal()) {
+            throw new InvalidOperationException(
+                    "A reverse (annulment) entry cannot be duplicated.", "REVERSAL_ENTRY_IMMUTABLE");
         }
 
         // NEW (2026-10-24, user request): the "Duplicar Comprobante" modal
@@ -499,13 +559,19 @@ public class JournalEntryService extends TenantAwareService {
 
         // 2. STATE VALIDATION
         // BUG FIX: an annulled entry's financial effect is permanently
-        // neutralized by annul() (items zeroed, description prefixed) --
+        // neutralized by annul() (since V9 by its ANULACION reverse; before,
+        // and in the system processes, by zeroing its lines) --
         // editing it here would silently undo that neutralization and
         // corrupt the audit trail. Mirrors the guard annul() already
         // applies to itself.
         if (existingEntry.isAnnulled()) {
             throw new InvalidOperationException(
                     "Cannot edit an annulled journal entry.", "ENTRY_ANNULLED_IMMUTABLE");
+        }
+        // Bloque A fase 3: the reverse must stay the exact mirror of its original.
+        if (existingEntry.isReversal()) {
+            throw new InvalidOperationException(
+                    "A reverse (annulment) entry cannot be edited.", "REVERSAL_ENTRY_IMMUTABLE");
         }
         if (!existingEntry.isActive()) {
             throw new InvalidOperationException(
@@ -1162,6 +1228,16 @@ public class JournalEntryService extends TenantAwareService {
         dto.setAnnulledAt(entry.getAnnulledAt());
         dto.setAnnulmentReason(entry.getAnnulmentReason());
         dto.setVersion(entry.getVersion());
+        // Bloque A fase 3 (2026-11-24): link between an annulled original and
+        // its ANULACION reverse, both ways.
+        if (entry.getReversalEntry() != null) {
+            dto.setReversalEntryId(entry.getReversalEntry().getId());
+            dto.setReversalDocumentNumber(entry.getReversalEntry().getDocumentNumber());
+        }
+        if (entry.getReversalOf() != null) {
+            dto.setReversalOfEntryId(entry.getReversalOf().getId());
+            dto.setReversalOfDocumentNumber(entry.getReversalOf().getDocumentNumber());
+        }
 
         List<JournalEntryResponseDTO.ItemResponse> items = entry.getItems().stream()
                 .map(item -> {
