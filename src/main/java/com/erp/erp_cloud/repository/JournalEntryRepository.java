@@ -662,4 +662,87 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     List<JournalEntry> findLiveByCompanyIdAndDocumentTypeCode(
             @Param("companyId") Long companyId,
             @Param("documentTypeCode") String documentTypeCode);
+
+
+    // ═══════════════════════════════════════════════════════════
+    // Fase 4 (2026-11-24): Libro Diario paginado por cursor
+    // (GET /api/v1/reports/journal-lines). Mismos filtros que
+    // searchEntries() -- compañía, activos, texto, fechas y tipo -- para
+    // que el Libro Diario, el Buscador por valor, el Resumen por tipo y el
+    // export del listado vean exactamente los mismos documentos que antes.
+    // ═══════════════════════════════════════════════════════════
+
+    String JOURNAL_BOOK_FILTER =
+            "j.company.id = :companyId " +
+            "AND j.active = true " +
+            "AND (:searchTerm IS NULL OR " +
+            "     LOWER(j.description) LIKE LOWER(CONCAT('%', :searchTerm, '%')) OR " +
+            "     LOWER(j.documentNumber) LIKE LOWER(CONCAT('%', :searchTerm, '%'))) " +
+            "AND (:startDate IS NULL OR j.entryDate >= :startDate) " +
+            "AND (:endDate IS NULL OR j.entryDate <= :endDate) " +
+            "AND (:documentTypeId IS NULL OR j.documentType.id = :documentTypeId) ";
+
+    /**
+     * One page of document headers in (entryDate, id) order, strictly after
+     * the cursor (afterDate, afterId); both null = first page. Constructor
+     * projection: no entity is hydrated. The caller asks for size + 1 rows
+     * to know whether there is a next page.
+     */
+    @Query("SELECT new com.erp.erp_cloud.dto.reports.financial.JournalBookHeaderRow(" +
+            "  j.id, j.entryDate, j.documentNumber, j.consecutive, j.documentType.id, j.description, " +
+            "  j.annulled, j.annulmentReason, re.id, re.documentNumber, ro.id, ro.documentNumber) " +
+            "FROM JournalEntry j " +
+            "LEFT JOIN j.reversalEntry re " +
+            "LEFT JOIN j.reversalOf ro " +
+            "WHERE " + JOURNAL_BOOK_FILTER +
+            "AND (:afterDate IS NULL OR j.entryDate > :afterDate " +
+            "     OR (j.entryDate = :afterDate AND j.id > :afterId)) " +
+            "ORDER BY j.entryDate ASC, j.id ASC")
+    List<com.erp.erp_cloud.dto.reports.financial.JournalBookHeaderRow> findJournalBookHeaders(
+            @Param("companyId") Long companyId,
+            @Param("searchTerm") String searchTerm,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("documentTypeId") Long documentTypeId,
+            @Param("afterDate") LocalDate afterDate,
+            @Param("afterId") Long afterId,
+            Pageable pageable);
+
+    /**
+     * Every line of the given documents in one query (account, third party
+     * and cost center joined -- no N+1), ordered by document and line id.
+     * Filtered by the line's own company_id as well, defence in depth.
+     */
+    @Query("SELECT new com.erp.erp_cloud.dto.reports.financial.JournalBookLineRow(" +
+            "  i.journalEntry.id, i.id, a.code, a.name, " +
+            "  tp.documentNumber, tp.firstName, tp.middleName, tp.lastName, tp.secondLastName, " +
+            "  tp.businessName, tp.tradeName, cc.name, i.debit, i.credit, i.description) " +
+            "FROM JournalEntryItem i " +
+            "JOIN i.account a " +
+            "LEFT JOIN i.thirdParty tp " +
+            "LEFT JOIN i.costCenter cc " +
+            "WHERE i.companyId = :companyId AND i.journalEntry.id IN :entryIds " +
+            "ORDER BY i.journalEntry.id ASC, i.id ASC")
+    List<com.erp.erp_cloud.dto.reports.financial.JournalBookLineRow> findJournalBookLines(
+            @Param("companyId") Long companyId,
+            @Param("entryIds") java.util.Collection<Long> entryIds);
+
+    /**
+     * Exact totals for the same filters, one side of the Libro Diario status
+     * filter: annulledSide = true -> annulled documents and the ANULACION
+     * reverses that cancel them; false -> everything else (Fase 3 rule).
+     * Returns one row: [documents, lines, SUM(debit), SUM(credit)].
+     */
+    @Query("SELECT COUNT(DISTINCT j.id), COUNT(i.id), SUM(i.debit), SUM(i.credit) " +
+            "FROM JournalEntry j LEFT JOIN j.items i " +
+            "WHERE " + JOURNAL_BOOK_FILTER +
+            "AND ((:annulledSide = true AND (j.annulled = true OR j.reversalOf IS NOT NULL)) " +
+            "  OR (:annulledSide = false AND j.annulled = false AND j.reversalOf IS NULL))")
+    List<Object[]> sumJournalBook(
+            @Param("companyId") Long companyId,
+            @Param("searchTerm") String searchTerm,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("documentTypeId") Long documentTypeId,
+            @Param("annulledSide") boolean annulledSide);
 }

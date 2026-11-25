@@ -67,6 +67,22 @@ public class ThirdPartyController {
 
 
 
+    /**
+     * Fase 4 (2026-11-24): server-side search for the third-party
+     * selectors. {@code q} = ranked text search (top 50); {@code ids} =
+     * resolve the ones already selected on screen (active or not).
+     * Wrapped in ApiResponse, unlike list() above.
+     */
+    @GetMapping("/lookup")
+    @Operation(summary = "Third-party lookup for selectors", description = "Ranked search (top 50) or by ids.")
+    public ResponseEntity<ApiResponse<java.util.List<ThirdPartyResponseDTO>>> lookup(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) java.util.List<Long> ids,
+            @RequestParam(defaultValue = "true") boolean activeOnly,
+            @RequestParam(required = false) Integer limit) {
+        return ResponseEntity.ok(new ApiResponse<>("Data retrieved", true, thirdPartyService.lookup(q, ids, activeOnly, limit)));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get third party by ID", description = "Retrieves the full profile of a specific third party using its internal ID.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Third party found")

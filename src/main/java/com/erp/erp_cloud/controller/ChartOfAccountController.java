@@ -150,6 +150,25 @@ public class ChartOfAccountController {
     }
 
     /**
+     * Fase 4 (2026-11-24): server-side search for the account selectors.
+     * {@code q} = ranked text search (top 50); {@code ids} = resolve the
+     * accounts already selected on screen; {@code prefixOf} = accounts
+     * whose code is a prefix of the given code (quick-create parents).
+     */
+    @GetMapping("/lookup")
+    @Operation(summary = "Account lookup for selectors", description = "Ranked search (top 50), by ids, or code prefixes of a code.")
+    public ResponseEntity<ApiResponse<List<ChartOfAccountResponseDTO>>> lookup(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) List<Long> ids,
+            @RequestParam(required = false) String prefixOf,
+            @RequestParam(defaultValue = "true") boolean postingOnly,
+            @RequestParam(defaultValue = "true") boolean activeOnly,
+            @RequestParam(required = false) Integer limit) {
+        List<ChartOfAccountResponseDTO> data = chartOfAccountService.lookup(q, ids, prefixOf, postingOnly, activeOnly, limit);
+        return ResponseEntity.ok(new ApiResponse<>("Data retrieved", true, data));
+    }
+
+    /**
      * Get account by internal ID.
      */
     @GetMapping("/{id}")

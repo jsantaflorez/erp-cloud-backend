@@ -134,6 +134,16 @@ public class ThirdParty extends BaseEntity implements Serializable {
     private CostCenter defaultCostCenter;
 
     public String getLegalDisplayName() {
+        return legalDisplayName(firstName, middleName, lastName, secondLastName, businessName, tradeName);
+    }
+
+    /**
+     * Same display name as {@link #getLegalDisplayName()}, from raw fields --
+     * Fase 4 (2026-11-24): used by the Libro Diario projection, which reads
+     * the name columns without loading the entity.
+     */
+    public static String legalDisplayName(String firstName, String middleName, String lastName,
+                                          String secondLastName, String businessName, String tradeName) {
         // 1. Build the legal name parts
         String legalName = String.join(" ",
                 Optional.ofNullable(firstName).orElse(""),

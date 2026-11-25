@@ -101,6 +101,26 @@ public class ThirdPartyService extends TenantAwareService {
         return entities.map(this::mapToResponseDTO);
     }
 
+    /**
+     * Fase 4 (2026-11-24): backs GET /third-parties/lookup -- ranked
+     * server-side search for the selectors (top {@link LookupText#MAX_LIMIT}),
+     * or {@code ids} to resolve values already selected (active or not).
+     */
+    @Transactional(readOnly = true)
+    public List<ThirdPartyResponseDTO> lookup(String query, java.util.Collection<Long> ids, boolean activeOnly, Integer limit) {
+        Long companyId = currentTenantId();
+        if (ids != null && !ids.isEmpty()) {
+            if (ids.size() > 200) {
+                throw new InvalidOperationException("At most 200 ids per lookup.", "LOOKUP_TOO_MANY_IDS");
+            }
+            return thirdPartyRepository.findByCompanyAndIdIn(companyId, ids).stream().map(this::mapToResponseDTO).toList();
+        }
+        String q = LookupText.normalize(query);
+        return thirdPartyRepository.lookup(companyId, q, LookupText.prefix(q), LookupText.contains(q), activeOnly,
+                        org.springframework.data.domain.PageRequest.of(0, LookupText.clampLimit(limit)))
+                .stream().map(this::mapToResponseDTO).toList();
+    }
+
     @Transactional(readOnly = true)
     public ThirdPartyResponseDTO findById(Long id) {
         return mapToResponseDTO(findEntityById(id));

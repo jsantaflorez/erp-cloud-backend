@@ -9,6 +9,7 @@ import com.erp.erp_cloud.service.reports.financial.ThirdPartyReportService;
 import com.erp.erp_cloud.service.reports.financial.FinancialStatementService;
 import com.erp.erp_cloud.service.reports.financial.TaxDetailReportService;
 import com.erp.erp_cloud.service.reports.financial.IncompleteMovementsReportService;
+import com.erp.erp_cloud.service.reports.financial.JournalBookReportService;
 import com.erp.erp_cloud.service.JournalEntryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,6 +33,7 @@ public class ReportController {
     private final ThirdPartyReportService thirdPartyReportService;
     private final TaxDetailReportService taxDetailReportService;
     private final IncompleteMovementsReportService incompleteMovementsReportService;
+    private final JournalBookReportService journalBookReportService;
 
     // ═══════════════════════════════════════════════════════════
     // TRIAL BALANCE
@@ -424,6 +426,53 @@ public class ReportController {
                 data.getTotalRecords());
 
         return ResponseEntity.ok(new ApiResponse<>(message, true, data));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // LIBRO DIARIO -- Fase 4 (2026-11-24): paginado por cursor
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * One page (up to 500 documents, with their lines) of the journal in
+     * (entryDate, id) order. Same filters as GET /journal-entries. First
+     * page: no afterDate/afterId; next pages: the nextAfterDate/nextAfterId
+     * of the previous response, until hasMore = false.
+     *
+     * Example: GET /api/v1/reports/journal-lines?startDate=2026-01-01&endDate=2026-12-31&size=500
+     */
+    @GetMapping("/journal-lines")
+    @Operation(summary = "Journal book page (Libro Diario), cursor-paginated",
+            description = "Documents with their lines in (entryDate, id) order, up to 500 per page. Walk pages with afterDate/afterId until hasMore is false.")
+    public ResponseEntity<ApiResponse<JournalBookPage>> getJournalLines(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long documentTypeId,
+            @RequestParam(required = false) String searchTerm,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate afterDate,
+            @RequestParam(required = false) Long afterId,
+            @RequestParam(required = false) Integer size) {
+        JournalBookPage data = journalBookReportService.page(
+                startDate, endDate, documentTypeId, searchTerm, afterDate, afterId, size);
+        return ResponseEntity.ok(new ApiResponse<>(
+                String.format("Journal book page: %d document(s).", data.getEntries().size()), true, data));
+    }
+
+    /**
+     * Exact totals (BigDecimal, summed in the database) for the same
+     * filters, split into all / active / annulled side (annulled documents
+     * plus their ANULACION reverses). The client checks the pages it read
+     * against these and refuses to show an incomplete book.
+     */
+    @GetMapping("/journal-lines/totals")
+    @Operation(summary = "Journal book totals (Libro Diario)",
+            description = "Document and line counts plus debit/credit totals for the same filters as /journal-lines, split by status.")
+    public ResponseEntity<ApiResponse<JournalBookTotals>> getJournalLinesTotals(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long documentTypeId,
+            @RequestParam(required = false) String searchTerm) {
+        return ResponseEntity.ok(new ApiResponse<>("Journal book totals.", true,
+                journalBookReportService.totals(startDate, endDate, documentTypeId, searchTerm)));
     }
 
 }

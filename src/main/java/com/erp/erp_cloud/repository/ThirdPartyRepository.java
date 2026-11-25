@@ -22,6 +22,44 @@ public interface ThirdPartyRepository extends JpaRepository<ThirdParty, Long> {
 
     Page<ThirdParty> findByCompanyId(Long companyId, Pageable pageable);
 
+    // Fase 4 (2026-11-24): ranked lookup for the third-party selectors.
+    // Ranking: exact document number, document starts with, a name field
+    // starts with, document contains, any name field contains. Patterns
+    // arrive lower-cased and escaped (LookupText); document numbers are
+    // compared as typed (digits). "first last" also matches, for natural
+    // persons searched by full name.
+    @Query("""
+        SELECT t FROM ThirdParty t
+        WHERE t.company.id = :companyId
+          AND (:activeOnly = false OR t.active = true)
+          AND (LOWER(t.documentNumber) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.businessName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.tradeName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.firstName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.middleName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.lastName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(COALESCE(t.secondLastName, '')) LIKE :contains ESCAPE '!'
+               OR LOWER(CONCAT(COALESCE(t.firstName, ''), ' ', COALESCE(t.lastName, ''))) LIKE :contains ESCAPE '!')
+        ORDER BY CASE
+            WHEN LOWER(t.documentNumber) = :exact THEN 0
+            WHEN LOWER(t.documentNumber) LIKE :prefix ESCAPE '!' THEN 1
+            WHEN LOWER(COALESCE(t.businessName, '')) LIKE :prefix ESCAPE '!'
+              OR LOWER(COALESCE(t.firstName, '')) LIKE :prefix ESCAPE '!' THEN 2
+            WHEN LOWER(t.documentNumber) LIKE :contains ESCAPE '!' THEN 3
+            ELSE 4 END, t.documentNumber
+        """)
+    java.util.List<ThirdParty> lookup(
+            @Param("companyId") Long companyId,
+            @Param("exact") String exact,
+            @Param("prefix") String prefix,
+            @Param("contains") String contains,
+            @Param("activeOnly") boolean activeOnly,
+            Pageable pageable);
+
+    /** Third parties by id, only those of the company (selected values on screen). */
+    @Query("SELECT t FROM ThirdParty t WHERE t.company.id = :companyId AND t.id IN :ids ORDER BY t.documentNumber")
+    java.util.List<ThirdParty> findByCompanyAndIdIn(@Param("companyId") Long companyId, @Param("ids") java.util.Collection<Long> ids);
+
     /**
      * Search across all relevant fields under a specific tenant.
      * Uses COALESCE to safely prevent NULL evaluation issues in JPQL string functions.

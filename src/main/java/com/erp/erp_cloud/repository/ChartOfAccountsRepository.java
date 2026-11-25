@@ -101,6 +101,53 @@ public interface ChartOfAccountsRepository extends TenantAwareRepository<ChartOf
     // it's correct for it to only offer currently-active accounts, so its
     // "active = true" filter is intentionally left as-is.
 
+    // ═══════════════════════════════════════════════════════════
+    // Fase 4 (2026-11-24): selector lookups (top N, ranked in SQL)
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Ranked search for the account selectors: exact code, code starts
+     * with, name starts with, code contains, name contains -- the same
+     * ranking the frontend combobox applies, so the top N cut here keeps
+     * the best matches. {@code postingOnly} limits it to movement
+     * accounts; {@code activeOnly} to active ones (the journal entry form
+     * wants both; historical report filters only the first).
+     * The patterns arrive already lower-cased and escaped (LookupText).
+     */
+    @Query("""
+        SELECT c FROM ChartOfAccounts c
+        WHERE c.company.id = :companyId
+          AND (:postingOnly = false OR c.postingAccount = true)
+          AND (:activeOnly = false OR c.active = true)
+          AND (LOWER(c.code) LIKE :contains ESCAPE '!' OR LOWER(c.name) LIKE :contains ESCAPE '!')
+        ORDER BY CASE
+            WHEN LOWER(c.code) = :exact THEN 0
+            WHEN LOWER(c.code) LIKE :prefix ESCAPE '!' THEN 1
+            WHEN LOWER(c.name) LIKE :prefix ESCAPE '!' THEN 2
+            WHEN LOWER(c.code) LIKE :contains ESCAPE '!' THEN 3
+            ELSE 4 END, c.code
+        """)
+    List<ChartOfAccounts> lookup(
+            @Param("companyId") Long companyId,
+            @Param("exact") String exact,
+            @Param("prefix") String prefix,
+            @Param("contains") String contains,
+            @Param("postingOnly") boolean postingOnly,
+            @Param("activeOnly") boolean activeOnly,
+            Pageable pageable);
+
+    /** Accounts by id, only those of the company (selected values on screen). */
+    @Query("SELECT c FROM ChartOfAccounts c WHERE c.company.id = :companyId AND c.id IN :ids ORDER BY c.code")
+    List<ChartOfAccounts> findByCompanyAndIdIn(@Param("companyId") Long companyId, @Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * Accounts whose code is a prefix of {@code code} ("5", "51", "5105"
+     * for "510510"): the parent candidates of the quick-create modal.
+     */
+    @Query("SELECT c FROM ChartOfAccounts c WHERE c.company.id = :companyId " +
+            "AND :code LIKE CONCAT(c.code, '%') ORDER BY c.code")
+    List<ChartOfAccounts> findCodePrefixesOf(@Param("companyId") Long companyId, @Param("code") String code);
+
     /**
      * Functional searches for UI using custom JPQL to ensure multi-tenant security.
      */

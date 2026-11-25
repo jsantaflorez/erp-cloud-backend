@@ -336,6 +336,35 @@ public class ChartOfAccountService extends TenantAwareService {
         return entities.map(this::mapToResponseDTO);
     }
 
+    /**
+     * Fase 4 (2026-11-24): backs GET /chart-of-accounts/lookup -- the
+     * selectors search on the server instead of loading the whole chart.
+     * Exactly one mode per call: {@code ids} (resolve values already
+     * selected), {@code prefixOf} (parent candidates of a code) or a
+     * ranked text search, top {@link LookupText#MAX_LIMIT}.
+     */
+    @Transactional(readOnly = true)
+    public List<ChartOfAccountResponseDTO> lookup(String query, java.util.Collection<Long> ids, String prefixOf,
+                                                  boolean postingOnly, boolean activeOnly, Integer limit) {
+        Long companyId = currentTenantId();
+        if (ids != null && !ids.isEmpty()) {
+            if (ids.size() > 200) {
+                throw new InvalidOperationException("At most 200 ids per lookup.", "LOOKUP_TOO_MANY_IDS");
+            }
+            return repository.findByCompanyAndIdIn(companyId, ids).stream().map(this::mapToResponseDTO).toList();
+        }
+        if (prefixOf != null) {
+            String code = prefixOf.trim();
+            if (code.isEmpty()) return List.of();
+            return repository.findCodePrefixesOf(companyId, code).stream().map(this::mapToResponseDTO).toList();
+        }
+        String q = LookupText.normalize(query);
+        return repository.lookup(companyId, q, LookupText.prefix(q), LookupText.contains(q),
+                        postingOnly, activeOnly,
+                        org.springframework.data.domain.PageRequest.of(0, LookupText.clampLimit(limit)))
+                .stream().map(this::mapToResponseDTO).toList();
+    }
+
     @Transactional(readOnly = true)
     public ChartOfAccountResponseDTO findById(Long id) {
         return mapToResponseDTO(findEntityById(id));
