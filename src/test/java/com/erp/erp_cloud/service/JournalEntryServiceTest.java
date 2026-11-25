@@ -931,6 +931,8 @@ class JournalEntryServiceTest {
     @Test
     @DisplayName("annul() saves the entry as it was before annulling it (Bloque A)")
     void annul_recordsPreviousVersion() {
+        // Fase 3: annul() now posts an ANULACION reverse, which needs its type.
+        reversalDocType();
         JournalEntry entry = existingEntry(LocalDate.now());
         when(repository.findById(999L)).thenReturn(Optional.of(entry));
         ArgumentCaptor<JournalEntryResponseDTO> before = ArgumentCaptor.forClass(JournalEntryResponseDTO.class);

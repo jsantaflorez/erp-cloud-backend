@@ -25,6 +25,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -218,24 +219,24 @@ class DocumentTypeServiceTest {
     @Test
     @DisplayName("getNextConsecutive() increments and persists the running counter")
     void getNextConsecutive_incrementsAndReturnsNext() {
-        DocumentType existing = existingDocType(5L, "FV");
-        existing.setCurrentConsecutive(7L);
-        when(repository.findByIdWithLock(5L)).thenReturn(Optional.of(existing));
+        // Fix 2026-11-24: the increment happens in the database (UPDATE) and
+        // the value is read back from it, never from a cached entity.
+        when(repository.incrementConsecutive(5L, COMPANY_ID)).thenReturn(1);
+        when(repository.findCurrentConsecutive(5L, COMPANY_ID)).thenReturn(8L);
 
         Long next = service.getNextConsecutive(5L);
 
         assertThat(next).isEqualTo(8L);
-        assertThat(existing.getCurrentConsecutive()).isEqualTo(8L);
+        verify(repository).incrementConsecutive(5L, COMPANY_ID);
+        verify(repository, never()).findByIdWithLock(any());
     }
 
     @Test
     @DisplayName("getNextConsecutive() rejects a document type from another company")
     void getNextConsecutive_crossTenant_throwsResourceNotFound() {
-        DocumentType existing = existingDocType(5L, "FV");
-        Company otherCompany = new Company();
-        otherCompany.setId(999L);
-        existing.setCompany(otherCompany);
-        when(repository.findByIdWithLock(5L)).thenReturn(Optional.of(existing));
+        // The UPDATE filters by the current company: another company's id
+        // updates 0 rows.
+        when(repository.incrementConsecutive(5L, COMPANY_ID)).thenReturn(0);
 
         assertThatThrownBy(() -> service.getNextConsecutive(5L))
                 .isInstanceOf(ResourceNotFoundException.class);

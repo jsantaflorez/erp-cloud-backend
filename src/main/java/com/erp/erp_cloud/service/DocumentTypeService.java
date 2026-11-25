@@ -144,17 +144,18 @@ public class DocumentTypeService extends TenantAwareService {
         Long companyId = currentTenantId();
         log.debug("Getting next consecutive for document type id: {} under company ID: {}", id, companyId);
 
-        // 1. Fetch with a Lock - Thread B will wait here until Thread A finishes
-        DocumentType dt = repository.findByIdWithLock(id)
-                .filter(d -> d.getCompany().getId().equals(companyId))
-                .orElseThrow(() -> new ResourceNotFoundException("DocumentType", id));
-
-        // 2. Increment
-        Long next = dt.getCurrentConsecutive() + 1;
-        dt.setCurrentConsecutive(next);
-
-        // 3. Save and release lock (at end of Transaction)
-        repository.save(dt);
+        // FIX (2026-11-24): increment in the database, not on the entity.
+        // The old findByIdWithLock() + setCurrentConsecutive() read a STALE
+        // value whenever the DocumentType was already loaded in this
+        // transaction (create() always loads it first), so two documents of
+        // the same type saved at once got the same number -- see
+        // DocumentTypeRepository.incrementConsecutive(). The UPDATE locks the
+        // row until commit (same serialization as before) and the follow-up
+        // SELECT sees this transaction's own increment.
+        if (repository.incrementConsecutive(id, companyId) == 0) {
+            throw new ResourceNotFoundException("DocumentType", id);
+        }
+        Long next = repository.findCurrentConsecutive(id, companyId);
 
         log.info("Next consecutive for document type {}: {}", id, next);
         return next;

@@ -5,6 +5,7 @@ import com.erp.erp_cloud.entity.Company;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -51,4 +52,31 @@ public interface DocumentTypeRepository extends JpaRepository<DocumentType, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT dt FROM DocumentType dt WHERE dt.id = :id")
     Optional<DocumentType> findByIdWithLock(@Param("id") Long id);
+
+    // ═══════════════════════════════════════════════════════════
+    // Consecutive (fix 2026-11-24, found seeding volume for Fase 4)
+    // ═══════════════════════════════════════════════════════════
+    //
+    // findByIdWithLock() did take the row lock (SELECT ... FOR UPDATE), but
+    // when the DocumentType was ALREADY in the persistence context -- and
+    // JournalEntryService.create() always loads it first, to validate it --
+    // Hibernate returns that managed instance with its STALE
+    // current_consecutive instead of the value it just read. Two documents of
+    // the same type saved at the same time got the same number and the second
+    // one failed with 409 DUPLICATE_VALUE (the unique key caught it, so no
+    // duplicate ever reached the database).
+    //
+    // A database-side UPDATE always works on the latest committed row and
+    // locks it until commit; the SELECT right after, in the same transaction,
+    // sees this transaction's own update. No stale cache in between.
+
+    /** current_consecutive + 1 on the row of this company; returns rows updated (0 = not found / other company). */
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE DocumentType dt SET dt.currentConsecutive = dt.currentConsecutive + 1 " +
+            "WHERE dt.id = :id AND dt.company.id = :companyId")
+    int incrementConsecutive(@Param("id") Long id, @Param("companyId") Long companyId);
+
+    /** Current value read from the database (scalar: bypasses the persistence context). */
+    @Query("SELECT dt.currentConsecutive FROM DocumentType dt WHERE dt.id = :id AND dt.company.id = :companyId")
+    Long findCurrentConsecutive(@Param("id") Long id, @Param("companyId") Long companyId);
 }
