@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -46,6 +47,7 @@ class AuthControllerIntegrationTest {
     private static final String TEST_PASSWORD   = "Password123!";
     private static final Long   TEST_COMPANY_ID = 4L;
     private static final String LOGIN_URL       = "/api/auth/login";
+    private static final String SELECT_URL      = "/api/auth/select-company";
 
     @Autowired
     private MockMvc mockMvc;
@@ -101,152 +103,112 @@ class AuthControllerIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------
-    // Helper: builds the JSON login request body
+    // B1 (2026-11-25): two-step login. Step 1 = email + password only.
     // ---------------------------------------------------------------------------
-    private Map<String, Object> buildLoginRequest(String email, String password, Long companyId) {
+    private Map<String, Object> buildLoginRequest(String email, String password) {
         Map<String, Object> body = new HashMap<>();
         body.put("email", email);
         body.put("password", password);
-        body.put("companyId", companyId);
         return body;
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 1 — Happy path
-    // ---------------------------------------------------------------------------
+    private Company testCompany() {
+        Company company = new Company();
+        company.setId(TEST_COMPANY_ID);
+        company.setLegalName("EMPRESA DE PRUEBA SAS");
+        company.setTaxId("900111222");
+        return company;
+    }
+
     @Test
-    @DisplayName("Should authenticate successfully and return 200 OK with a valid JWT token")
+    @DisplayName("Step 1: right password -> 200 with pre-session token and the user's companies")
     void login_Success() throws Exception {
-
-
-        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
-                .thenReturn(Optional.of(mockUser));
+        when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(mockUser));
+        when(userRepository.findAccessibleCompaniesByEmail(TEST_EMAIL)).thenReturn(List.of(testCompany()));
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest(TEST_EMAIL, TEST_PASSWORD, TEST_COMPANY_ID))))
+                        .content(objectMapper.writeValueAsString(buildLoginRequest(TEST_EMAIL, TEST_PASSWORD))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token").exists())
-                .andExpect(jsonPath("$.tokenType").value("Bearer"))
-                .andExpect(jsonPath("$.expiresIn").isNumber())
-                .andExpect(jsonPath("$.user.email").value(TEST_EMAIL))
-                .andExpect(jsonPath("$.user.fullName").value("Jaime Santa"))
-                .andExpect(jsonPath("$.user.companyId").value(TEST_COMPANY_ID));
+                .andExpect(jsonPath("$.data.preAuthToken").exists())
+                .andExpect(jsonPath("$.data.companies[0].id").value(TEST_COMPANY_ID))
+                .andExpect(jsonPath("$.data.companies[0].taxId").value("900111222"));
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 2 — Wrong password
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 401 when the provided password does not match")
+    @DisplayName("Step 1: wrong password -> 401")
     void login_Failure_BadCredentials() throws Exception {
-
-        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
-                .thenReturn(Optional.of(mockUser));
+        when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest(TEST_EMAIL, "WrongPassword!", TEST_COMPANY_ID))))
+                        .content(objectMapper.writeValueAsString(buildLoginRequest(TEST_EMAIL, "WrongPassword!"))))
                 .andExpect(status().isUnauthorized());
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 3 — Account locked
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 401 when the account is temporarily locked due to failed attempts")
+    @DisplayName("Step 1: locked account -> 401")
     void login_Failure_AccountLocked() throws Exception {
-
-        // Override the lock state — everything else from setUp() remains valid
         mockUser.setLockedUntil(LocalDateTime.now().plusMinutes(15));
-
-        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
-                .thenReturn(Optional.of(mockUser));
+        when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest(TEST_EMAIL, TEST_PASSWORD, TEST_COMPANY_ID))))
+                        .content(objectMapper.writeValueAsString(buildLoginRequest(TEST_EMAIL, TEST_PASSWORD))))
                 .andExpect(status().isUnauthorized());
-        // Note: if your GlobalExceptionHandler maps LockedException → 423 Locked, change to:
-        // .andExpect(status().isLocked());
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 4 — Inactive user
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 401 when the user account is marked as inactive")
+    @DisplayName("Step 1: inactive user -> 401")
     void login_Failure_InactiveUser() throws Exception {
-
         mockUser.setActive(false);
-
-
-        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
-                .thenReturn(Optional.of(mockUser));
-
+        when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(mockUser));
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest(TEST_EMAIL, TEST_PASSWORD, TEST_COMPANY_ID))))
+                        .content(objectMapper.writeValueAsString(buildLoginRequest(TEST_EMAIL, TEST_PASSWORD))))
                 .andExpect(status().isUnauthorized());
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 5 — User exists but has no role assigned in the requested tenant
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 401 when the user has no role assigned in the requested company")
-    void login_Failure_NoRoleInCompany() throws Exception {
-
-        // Detach the role from the target company by assigning it to a different tenant
-        Company otherCompany = new Company();
-        otherCompany.setId(99L); // Different tenant — not the one being requested
-        mockUserRole.setCompany(otherCompany);
-
-
-        when(userRepository.findByEmailWithRolesAndPermissionsForCompany(TEST_EMAIL, TEST_COMPANY_ID))
-                .thenReturn(Optional.of(mockUser));
+    @DisplayName("Step 1: right password but no active company -> 400 NO_ACTIVE_COMPANIES")
+    void login_Failure_NoActiveCompany() throws Exception {
+        when(userRepository.findByEmail(TEST_EMAIL)).thenReturn(Optional.of(mockUser));
+        when(userRepository.findAccessibleCompaniesByEmail(TEST_EMAIL)).thenReturn(List.of());
 
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest(TEST_EMAIL, TEST_PASSWORD, TEST_COMPANY_ID))))
-                .andExpect(status().isUnauthorized());
+                        .content(objectMapper.writeValueAsString(buildLoginRequest(TEST_EMAIL, TEST_PASSWORD))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("NO_ACTIVE_COMPANIES"));
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 6 — Malformed email fails Bean Validation before hitting the service
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 400 Bad Request when the email format is invalid")
+    @DisplayName("Step 1: malformed email -> 400")
     void login_Failure_InvalidEmailFormat() throws Exception {
-
         mockMvc.perform(post(LOGIN_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                buildLoginRequest("not-an-email", TEST_PASSWORD, TEST_COMPANY_ID))))
+                        .content(objectMapper.writeValueAsString(buildLoginRequest("not-an-email", TEST_PASSWORD))))
                 .andExpect(status().isBadRequest());
     }
 
-    // ---------------------------------------------------------------------------
-    // Scenario 7 — Missing companyId fails Bean Validation before hitting the service
-    // ---------------------------------------------------------------------------
     @Test
-    @DisplayName("Should return 400 Bad Request when the companyId is missing from the request body")
-    void login_Failure_MissingCompanyId() throws Exception {
-
-        // Build the request manually without the companyId field
-        Map<String, Object> incompleteRequest = new HashMap<>();
-        incompleteRequest.put("email", TEST_EMAIL);
-        incompleteRequest.put("password", TEST_PASSWORD);
-
-        mockMvc.perform(post(LOGIN_URL)
+    @DisplayName("Step 2 without a pre-session token -> 401 LOGIN_SESSION_EXPIRED")
+    void selectCompany_WithoutPreSession() throws Exception {
+        mockMvc.perform(post(SELECT_URL)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(incompleteRequest)))
-                .andExpect(status().isBadRequest());
+                        .content("{\"companyId\": " + TEST_COMPANY_ID + "}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.message").value("LOGIN_SESSION_EXPIRED"));
+    }
+
+    @Test
+    @DisplayName("The removed public directory POST /api/auth/companies no longer answers with companies")
+    void companiesDirectory_IsGone() throws Exception {
+        mockMvc.perform(post("/api/auth/companies")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\": \"" + TEST_EMAIL + "\"}"))
+                .andExpect(result -> org.assertj.core.api.Assertions
+                        .assertThat(result.getResponse().getStatus()).isGreaterThanOrEqualTo(400));
     }
 }

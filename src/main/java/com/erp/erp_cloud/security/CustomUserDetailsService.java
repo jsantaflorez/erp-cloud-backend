@@ -29,6 +29,14 @@ public class CustomUserDetailsService implements UserDetailsService {
     @Transactional(readOnly = true)
     public UserDetails loadUserByUsername(String unifiedPrincipal) throws UsernameNotFoundException {
 
+        // B1 (2026-11-25): step 1 of the two-step login authenticates the
+        // e-mail alone (no company yet) -- only the password, active flag and
+        // lock are checked here; the principal carries no company and no
+        // authorities, and is only used to issue the pre-session token.
+        if (unifiedPrincipal != null && !unifiedPrincipal.isBlank() && !unifiedPrincipal.contains("|")) {
+            return loadForPasswordCheck(unifiedPrincipal);
+        }
+
         // 1. Validates and parses the combined multi-tenant parameter structure
         if (unifiedPrincipal == null || !unifiedPrincipal.contains("|")) {
             log.warn("AUTH_FAIL | reason: MALFORMED_PRINCIPAL");
@@ -108,5 +116,21 @@ public class CustomUserDetailsService implements UserDetailsService {
 
         // 6. Returns the finalized principal populated from real persistent database data
         return new UserPrincipal(user, companyId, roleCodes, permissionCodes);
+    }
+
+
+    /**
+     * B1 (2026-11-25): user by e-mail only, for the password check of step 1.
+     * Unknown or inactive -> UsernameNotFoundException (DaoAuthenticationProvider
+     * turns it into the same generic BadCredentials as a wrong password).
+     */
+    private UserDetails loadForPasswordCheck(String email) {
+        User user = userRepository.findByEmail(email)
+                .filter(User::isActive)
+                .orElseThrow(() -> {
+                    log.warn("AUTH_FAIL | reason: USER_NOT_FOUND_OR_INACTIVE | identityHash: {}", email.hashCode());
+                    return new UsernameNotFoundException("Unauthorized identity criteria match rejected.");
+                });
+        return new UserPrincipal(user, null, Set.of(), Set.of());
     }
 }

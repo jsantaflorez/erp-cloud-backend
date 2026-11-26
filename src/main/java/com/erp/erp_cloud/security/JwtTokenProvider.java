@@ -24,10 +24,15 @@ public class JwtTokenProvider {
     private static final String CLAIM_COMPANY_ID = "companyId";
     private static final String CLAIM_AUTHORITIES = "authorities";
     private static final String TOKEN_TYPE_ACCESS = "ACCESS";
+    // B1 (2026-11-25): pre-session token of the two-step login. Only
+    // POST /api/auth/select-company accepts it; extractValidClaims() (the JWT
+    // filter of every /api/v1 request) rejects anything that is not ACCESS.
+    private static final String TOKEN_TYPE_PRE_AUTH = "PRE_AUTH";
     private static final int MIN_SECRET_KEY_BYTES = 32;
 
     private final SecretKey key;
     private final long jwtExpirationInMs;
+    private final long preAuthExpirationInMs;
 
     /**
      * Constructor designed with Fail-Fast approach.
@@ -35,7 +40,8 @@ public class JwtTokenProvider {
      */
     public JwtTokenProvider(
             @Value("${app.jwt.secret}") String jwtSecret,
-            @Value("${app.jwt.expiration-ms:86400000}") long jwtExpirationInMs) {
+            @Value("${app.jwt.expiration-ms:86400000}") long jwtExpirationInMs,
+            @Value("${app.jwt.pre-auth-expiration-ms:300000}") long preAuthExpirationInMs) {
 
         byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
 
@@ -47,6 +53,41 @@ public class JwtTokenProvider {
 
         this.key = Keys.hmacShaKeyFor(keyBytes);
         this.jwtExpirationInMs = jwtExpirationInMs;
+        this.preAuthExpirationInMs = preAuthExpirationInMs;
+    }
+
+    /**
+     * B1 (2026-11-25): short-lived token issued after step 1 of the login
+     * (password verified, company not chosen yet). No company, no
+     * authorities: it identifies the user only, and only step 2 accepts it.
+     */
+    public String generatePreAuthToken(UserPrincipal userPrincipal) {
+        Date now = new Date();
+        return Jwts.builder()
+                .subject(userPrincipal.getUsername())
+                .claim(CLAIM_TOKEN_TYPE, TOKEN_TYPE_PRE_AUTH)
+                .claim(CLAIM_USER_ID, userPrincipal.getId())
+                .issuedAt(now)
+                .expiration(new Date(now.getTime() + preAuthExpirationInMs))
+                .signWith(key, Jwts.SIG.HS256)
+                .compact();
+    }
+
+    /**
+     * Validates a pre-session token (signature, expiry and type PRE_AUTH).
+     * An access token is rejected here, the same way a pre-session token is
+     * rejected by {@link #extractValidClaims(String)}.
+     */
+    public PreAuthClaims extractPreAuthClaims(String token) throws JwtException {
+        Claims claims = parseClaims(token);
+        if (!TOKEN_TYPE_PRE_AUTH.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+            throw new UnsupportedJwtException("Not a pre-session token.");
+        }
+        return new PreAuthClaims(claims.getSubject(), claims.get(CLAIM_USER_ID, Long.class));
+    }
+
+    public long getPreAuthExpirationInMs() {
+        return this.preAuthExpirationInMs;
     }
 
     /**
@@ -94,6 +135,12 @@ public class JwtTokenProvider {
     @SuppressWarnings("unchecked")
     public UserPrincipalClaims extractValidClaims(String token) throws JwtException {
         Claims claims = parseClaims(token);
+        // B1 (2026-11-25): only ACCESS tokens open a session. A pre-session
+        // token (step 1 of the login) carries no company and must never be
+        // accepted by the JWT filter.
+        if (!TOKEN_TYPE_ACCESS.equals(claims.get(CLAIM_TOKEN_TYPE, String.class))) {
+            throw new UnsupportedJwtException("Not an access token.");
+        }
 
         return new UserPrincipalClaims(
                 claims.getSubject(),

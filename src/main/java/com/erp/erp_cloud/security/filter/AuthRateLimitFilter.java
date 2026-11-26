@@ -19,7 +19,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-IP sliding-window rate limit for the public auth endpoints
- * (audit 2026-11-02, A2): POST /api/auth/login and POST /api/auth/companies.
+ * (audit 2026-11-02, A2): POST /api/auth/login and POST /api/auth/select-company
+ * (B1, 2026-11-25: the latter replaced the public /api/auth/companies and keeps
+ * its limit, property company-lookup-per-minute).
  *
  * In-memory, so the limit is per application instance. That is enough for
  * a single-server pilot; with several instances behind a load balancer move
@@ -76,7 +78,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             return true;
         }
         String path = request.getServletPath();
-        return !("/api/auth/login".equals(path) || "/api/auth/companies".equals(path));
+        // B1 (2026-11-25): /api/auth/companies no longer exists; step 2 of the
+        // login (/select-company) takes the second, looser limit.
+        return !("/api/auth/login".equals(path) || "/api/auth/select-company".equals(path));
     }
 
     @Override

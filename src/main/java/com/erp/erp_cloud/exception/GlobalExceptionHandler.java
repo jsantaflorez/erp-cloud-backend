@@ -107,6 +107,17 @@ public class GlobalExceptionHandler {
     // SPRING SECURITY & AUTH EXCEPTIONS (Binds to Phase 2)
     // ═══════════════════════════════════════════════════════════
 
+    // B1 (2026-11-25): step 2 of the two-step login without a valid
+    // pre-session token (expired after 5 minutes, tampered, or an access
+    // token instead). The Login screen goes back to step 1.
+    @ExceptionHandler(LoginSessionExpiredException.class)
+    public ResponseEntity<ApiResponse<Void>> handleLoginSessionExpired(LoginSessionExpiredException ex, HttpServletRequest request) {
+        log.warn("Login step 2 rejected: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(buildError("LOGIN_SESSION_EXPIRED", request));
+    }
+
     @ExceptionHandler(org.springframework.security.authentication.LockedException.class)
     public ResponseEntity<ApiResponse<Void>> handleLockedException(org.springframework.security.authentication.LockedException ex, HttpServletRequest request) {
         log.warn("Access Denied | Account is temporarily locked: {}", ex.getMessage());
